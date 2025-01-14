@@ -1,7 +1,7 @@
 import pandas as pd
 from pyomo.environ import (
     ConcreteModel, Var, NonNegativeReals, Binary, Param,
-    Objective, Constraint, SolverFactory, Set, minimize
+    Objective, Constraint, SolverFactory, Set, minimize, ConstraintList
 )
 
 def load_data(file_path):
@@ -145,6 +145,13 @@ def build_model_for_system(system_name, baseline_row, data):
         initialize=lambda m, tech: data['technology'].loc[tech, 'lifespan'],
         default=0
     )
+
+    # Additional Parameter: introduced_year per technology
+    # Assuming 'introduced_year' is the same for all technologies for a system.
+    # If different technologies have different introduction years, adjust accordingly.
+    model.introduced_year_param = Param(
+        initialize=lambda m: introduced_year
+    )
     # Constraints
 
     def hard_baseline_fuel_rule(m, f, yr):
@@ -210,8 +217,11 @@ def build_model_for_system(system_name, baseline_row, data):
             return m.active_technology[tech, yr] == m.continue_technology[tech, yr]
 
         # At the end of the lifespan, active technology is determined by replacement or renewal
-        if yr == end_of_lifespan:
+        elif yr == end_of_lifespan:
             return m.active_technology[tech, yr] == m.replace[tech, yr] + m.renew[tech, yr]
+
+        else:
+            m.active_technology[tech, yr] == m.continue_technology[tech, yr] + m.replace[tech, yr] + m.renew[tech, yr]
 
         return Constraint.Skip
 
@@ -282,6 +292,7 @@ def build_model_for_system(system_name, baseline_row, data):
     model.material_technology_link_constraint = Constraint(
         model.years, model.materials, rule=material_technology_link_rule
     )
+
 
     # Objective function with levelized capex and opex
     def total_cost_rule(m):
@@ -373,6 +384,8 @@ for system_name in data['baseline'].index:
                     "Year": yr,
                     "Technology": active_technology
                 })
+
+
 
         # Save results
         results_dict[system_name] = {
