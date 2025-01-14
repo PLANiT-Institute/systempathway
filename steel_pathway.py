@@ -139,6 +139,11 @@ def build_model_for_system(system_name, baseline_row, data):
         model.technologies, model.years, rule=continuity_active_rule
     )
 
+    def enforce_exclusivity_rule(m, tech, yr):
+        return m.replace[tech, yr] + m.renew[tech, yr] + m.continue_technology[tech, yr] <= 1
+
+    model.enforce_exclusivity = Constraint(model.technologies, model.years, rule=enforce_exclusivity_rule)
+
     def active_technology_rule(m, tech, yr):
         lifespan = m.lifespan_param[tech]
         end_of_lifespan = introduced_year + lifespan
@@ -156,6 +161,16 @@ def build_model_for_system(system_name, baseline_row, data):
 
     model.active_technology_constraint = Constraint(
         model.technologies, model.years, rule=active_technology_rule
+    )
+
+    def same_technology_renewal_rule(m, tech, yr):
+        if yr > min(m.years):  # Skip the first year
+            # If the technology was active in the previous year, it cannot be replaced but must be renewed
+            return m.replace[tech, yr] <= 1 - m.active_technology[tech, yr - 1]
+        return Constraint.Skip
+
+    model.same_technology_renewal_constraint = Constraint(
+        model.technologies, model.years, rule=same_technology_renewal_rule
     )
 
     def introduction_year_constraint_rule(m, tech, yr):
@@ -251,77 +266,67 @@ def build_model_for_system(system_name, baseline_row, data):
 
     return model
 
-# -------------------------------------------------------------------------
-# Main script to load data, loop over each furnace site, and solve
+
+# main function
+# Load data
 file_path = 'database/steel_data.xlsx'
 data = load_data(file_path)
-
-solver = SolverFactory('glpk')  # or another solver
-
+solver = SolverFactory('glpk')
 results_dict = {}
 
+# Loop through each system and solve
 for system_name in data['baseline'].index:
     print(f"\n=== Solving for furnace site: {system_name} ===")
 
-    # Extract the row (Series) for the current furnace site
     baseline_row = data['baseline'].loc[system_name]
 
-    # 1) Build the model
-    m = build_model_for_system(system_name, baseline_row, data)
-
-    # 2) Solve the model
-    result = solver.solve(m, tee=True)
+    # Build and solve the model
+    model = build_model_for_system(system_name, baseline_row, data)
+    result = solver.solve(model, tee=False)
 
     if result.solver.status == 'ok' and result.solver.termination_condition == 'optimal':
-        # Gather results for this system
-        production_value = baseline_row['production']  # From the baseline_row
+        production_value = baseline_row['production']
 
-        # Fuel consumption data
-        fuel_data = []
-        for yr in m.years:
-            for f in m.fuels:
-                if m.fuel_select[f, yr].value > 0.5:
-                    fuel_data.append({
-                        "Year": yr,
-                        "Fuel": f,
-                        "Consumption (tons)": m.fuel_consumption[f, yr].value
-                    })
+        # Extract fuel consumption
+        fuel_data = [
+            {
+                "Year": yr,
+                "Fuel": f,
+                "Consumption (tons)": model.fuel_consumption[f, yr].value
+            }
+            for yr in model.years
+            for f in model.fuels
+            if model.fuel_select[f, yr].value > 0.5
+        ]
 
-        # Technology changes data
-        technology_changes = []
+        # Extract technology changes
+        technology_changes = [
+            {
+                "Year": yr,
+                "Technology": next(
+                    (tech for tech in model.technologies if model.active_technology[tech, yr].value > 0.5),
+                    "None"
+                ),
+                "Status": (
+                    "replace" if any(model.replace[tech, yr].value > 0.5 for tech in model.technologies) else
+                    "renew" if any(model.renew[tech, yr].value > 0.5 for tech in model.technologies) else
+                    "continue" if any(model.continue_technology[tech, yr].value > 0.5 for tech in model.technologies) else
+                    "inactive"
+                )
+            }
+            for yr in model.years
+        ]
 
-        for yr in m.years:
-            active_technology = None
-
-
-            # If no replacement occurred, the baseline technology remains active
-            if not active_technology:
-                for tech in m.technologies:
-                    if m.active_technology[tech, yr].value > 0.5:
-                        active_technology = tech
-                        break
-
-            # Add the active technology for the year
-            if active_technology:
-                technology_changes.append({
-                    "Year": yr,
-                    "Technology": active_technology
-                })
-
-        # Save the replacement count in the results dictionary
+        # Store results
         results_dict[system_name] = {
             "Production": production_value,
             "Fuel Consumption": fuel_data,
-            "Technology Changes": technology_changes,
-            # "Replacements": replacements,  # List of replacements with year and technology
-            # "Total Replacements": replacement_count  # Total number of replacements
+            "Technology Changes": technology_changes
         }
-
     else:
         print(f"Solver failed for {system_name}. Status: {result.solver.status}, Condition: {result.solver.termination_condition}")
-#
-# Display results for all systems
-# Display results for all systems
+
+# Display results
 for system_name, results in results_dict.items():
     print(f"\n=== Results for {system_name} ===")
     print(f"Production: {results['Production']} tons")
@@ -332,4 +337,5 @@ for system_name, results in results_dict.items():
 
     print("\nTechnology Changes:")
     for tc in results['Technology Changes']:
-        print(f"  Year {tc['Year']}: {tc['Technology']}")
+        print(f"  Year {tc['Year']}: {tc['Technology']} ({tc['Status']})")
+
