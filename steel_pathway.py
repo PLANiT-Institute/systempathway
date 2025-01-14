@@ -52,21 +52,14 @@ def build_model_for_system(system_name, baseline_row, data):
     # Exclude 2025 from the optimization years
     all_years = sorted([int(yr) for yr in data['capex'].columns.tolist()])
     initial_year = 2025  # Fixed baseline year
-    optimization_years = [yr for yr in all_years if yr != initial_year]
+    # optimization_years = [yr for yr in all_years if yr != initial_year]
+    optimization_years = all_years
     model.years = Set(initialize=optimization_years)
 
     # Parameters from the baseline
     production = baseline_row['production']
-    remained_lifespan = baseline_row['remained_lifespan']
+    introduced_year = baseline_row['introduced_year']
     baseline_tech = baseline_row['technology']
-
-    # Determine end_of_life_year
-    base_year = min(model.years)
-    end_of_life_year = base_year + remained_lifespan - 1
-
-    # Verify end_of_life_year is within model years
-    if end_of_life_year not in model.years:
-        raise ValueError(f"EoL year {end_of_life_year} not within optimization years.")
 
     # Parameters
     model.capex_param = Param(
@@ -131,24 +124,24 @@ def build_model_for_system(system_name, baseline_row, data):
         domain=NonNegativeReals,
         doc="Amount of fuel consumed in a given year"
     )
-    # Active Technology Variable
+    # Adjust the definition of active_technology to include introduced_year
     model.active_technology = Var(
-        model.technologies, model.years,
+        model.technologies, model.years | {introduced_year},  # Include introduced_year
         domain=Binary,
         doc="1 if technology is active in a given year, else 0"
     )
 
-    # --- 2) Constraints ---
 
-    # a. Disallow replace or renew outside EoL year
-    # def no_replace_or_renew_outside_eol_rule(m, tech, yr):
-    #     if yr != end_of_life_year:
-    #         return m.replace[tech, yr] + m.renew[tech, yr] == 0
-    #     return Constraint.Skip
-    #
-    # model.no_replace_or_renew_outside_eol_constraint = Constraint(
-    #     model.technologies, model.years, rule=no_replace_or_renew_outside_eol_rule
-    # )
+    # l. Introduction Year Constraint
+    def introduction_year_constraint_rule(m, tech, yr):
+        introduction_year = data['technology_introduction'][tech]
+        if yr < introduction_year:
+            return m.replace[tech, yr] == 0
+        return Constraint.Skip
+
+    model.introduction_year_constraint = Constraint(
+        model.technologies, model.years, rule=introduction_year_constraint_rule
+    )
 
     # f. Ensure only one fuel is selected each year
     def fuel_selection_rule(m, yr):
@@ -202,17 +195,6 @@ def build_model_for_system(system_name, baseline_row, data):
         model.years, model.materials, rule=material_technology_link_rule
     )
 
-    # l. Introduction Year Constraint
-    def introduction_year_constraint_rule(m, tech, yr):
-        introduction_year = data['technology_introduction'][tech]
-        if yr < introduction_year:
-            return m.replace[tech, yr] == 0
-        return Constraint.Skip
-
-    model.introduction_year_constraint = Constraint(
-        model.technologies, model.years, rule=introduction_year_constraint_rule
-    )
-
     # --- 3) Objective function ---
     def total_cost_rule(m):
         return sum(
@@ -241,7 +223,6 @@ def build_model_for_system(system_name, baseline_row, data):
     model.objective = Objective(rule=total_cost_rule, sense=minimize)
 
     return model
-
 
 # -------------------------------------------------------------------------
 # Main script to load data, loop over each furnace site, and solve
@@ -281,13 +262,29 @@ for system_name in data['baseline'].index:
 
         # Technology changes data
         technology_changes = []
+
         for yr in m.years:
+            active_technology = None
+
+            # Check if any replacement occurs in this year
             for tech in m.technologies:
                 if m.replace[tech, yr].value > 0.5:
-                    technology_changes.append({
-                        "Year": yr,
-                        "Technology": tech
-                    })
+                    active_technology = tech
+                    break  # Only one replacement can happen per year
+
+            # If no replacement occurred, the baseline technology remains active
+            if not active_technology:
+                for tech in m.technologies:
+                    if m.active_technology[tech, yr].value > 0.5:
+                        active_technology = tech
+                        break
+
+            # Add the active technology for the year
+            if active_technology:
+                technology_changes.append({
+                    "Year": yr,
+                    "Technology": active_technology
+                })
 
         # Save results
         results_dict[system_name] = {
@@ -310,8 +307,3 @@ for system_name, results in results_dict.items():
     print("\nTechnology Changes:")
     for tc in results['Technology Changes']:
         print(f"  Year {tc['Year']}: {tc['Technology']}")
-
-#
-# for yr in m.years:
-#     for tech in m.technologies:
-#         print(f"Year {yr}, Technology {tech}: Replace = {m.replace[tech, yr].value}, Renew = {m.renew[tech, yr].value}")
