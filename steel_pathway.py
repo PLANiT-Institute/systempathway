@@ -62,96 +62,28 @@ def build_model_for_system(system_name, baseline_row, data):
     baseline_tech = baseline_row['technology']
 
     # Parameters
-    model.capex_param = Param(
-        model.technologies, model.years,
-        initialize=lambda m, tech, yr: data['capex'].loc[tech, yr],
-        default=0.0
-    )
-    model.opex_param = Param(
-        model.technologies, model.years,
-        initialize=lambda m, tech, yr: data['opex'].loc[tech, yr],
-        default=0.0
-    )
-    model.renewal_param = Param(
-        model.technologies, model.years,
-        initialize=lambda m, tech, yr: data['renewal'].loc[tech, yr],
-        default=0.0
-    )
-    model.fuel_cost_param = Param(
-        model.fuels, model.years,
-        initialize=lambda m, f, yr: data['fuel_cost'].loc[f, yr],
-        default=0.0
-    )
-    model.fuel_eff_param = Param(
-        model.fuels, model.years,
-        initialize=lambda m, f, yr: data['fuel_efficiency'].loc[f, yr],
-        default=0.0
-    )
-    model.material_cost_param = Param(
-        model.materials, model.years,
-        initialize=lambda m, mat, yr: data['material_cost'].loc[mat, yr],
-        default=0.0
-    )
-    model.material_eff_param = Param(
-        model.materials, model.years,
-        initialize=lambda m, mat, yr: data['material_efficiency'].loc[mat, yr],
-        default=0.0
-    )
+    model.capex_param = Param(model.technologies, model.years,initialize=lambda m, tech, yr: data['capex'].loc[tech, yr], default=0.0)
+    model.opex_param = Param(model.technologies, model.years, initialize=lambda m, tech, yr: data['opex'].loc[tech, yr],default=0.0)
+    model.renewal_param = Param(model.technologies, model.years,initialize=lambda m, tech, yr: data['renewal'].loc[tech, yr], default=0.0)
+    model.fuel_cost_param = Param(model.fuels, model.years, initialize=lambda m, f, yr: data['fuel_cost'].loc[f, yr],default=0.0)
+    model.fuel_eff_param = Param(model.fuels, model.years,initialize=lambda m, f, yr: data['fuel_efficiency'].loc[f, yr], default=0.0)
+    model.material_cost_param = Param(model.materials, model.years,initialize=lambda m, mat, yr: data['material_cost'].loc[mat, yr], default=0.0)
+    model.material_eff_param = Param(model.materials, model.years,initialize=lambda m, mat, yr: data['material_efficiency'].loc[mat, yr],default=0.0)
 
-    # Decision variables
-    model.fuel_select = Var(
-        model.fuels, model.years,
-        domain=Binary,
-        doc="1 if fuel is selected in a given year, else 0"
-    )
-    model.material_select = Var(
-        model.materials, model.years,
-        domain=Binary,
-        doc="1 if material is selected in a given year, else 0"
-    )
+    # Decision Variables
+    model.fuel_select = Var(model.fuels, model.years, domain=Binary)
+    model.material_select = Var(model.materials, model.years, domain=Binary)
+    model.continue_technology = Var(model.technologies, model.years, domain=Binary)
+    model.replace = Var(model.technologies, model.years, domain=Binary)
+    model.renew = Var(model.technologies, model.years, domain=Binary)
+    model.fuel_consumption = Var(model.fuels, model.years, domain=NonNegativeReals)
+    model.active_technology = Var(model.technologies, model.years | {introduced_year}, domain=Binary)
 
-    # Decision variable for continuing the same technology
-    model.continue_technology = Var(
-        model.technologies, model.years,
-        domain=Binary,
-        doc="1 if the technology is continued from the previous year, else 0"
-    )
+    # Parameters for Lifespan and Introduction Year
+    model.lifespan_param = Param(model.technologies,
+                                 initialize=lambda m, tech: data['technology'].loc[tech, 'lifespan'], default=0)
+    model.introduced_year_param = Param(initialize=lambda m: introduced_year)
 
-    model.replace = Var(
-        model.technologies, model.years,
-        domain=Binary,
-        doc="1 if technology is replaced in a given year, else 0"
-    )
-    model.renew = Var(
-        model.technologies, model.years,
-        domain=Binary,
-        doc="1 if the technology is renewed in a given year, else 0"
-    )
-    model.fuel_consumption = Var(
-        model.fuels, model.years,
-        domain=NonNegativeReals,
-        doc="Amount of fuel consumed in a given year"
-    )
-    # Adjust the definition of active_technology to include introduced_year
-    model.active_technology = Var(
-        model.technologies, model.years | {introduced_year},  # Include introduced_year
-        domain=Binary,
-        doc="1 if technology is active in a given year, else 0"
-    )
-
-    # Define lifespan as a parameter
-    model.lifespan_param = Param(
-        model.technologies,
-        initialize=lambda m, tech: data['technology'].loc[tech, 'lifespan'],
-        default=0
-    )
-
-    # Additional Parameter: introduced_year per technology
-    # Assuming 'introduced_year' is the same for all technologies for a system.
-    # If different technologies have different introduction years, adjust accordingly.
-    model.introduced_year_param = Param(
-        initialize=lambda m: introduced_year
-    )
     # Constraints
 
     def hard_baseline_fuel_rule(m, f, yr):
@@ -208,28 +140,24 @@ def build_model_for_system(system_name, baseline_row, data):
     )
 
     def active_technology_rule(m, tech, yr):
-        introduced_year = baseline_row['introduced_year']
         lifespan = m.lifespan_param[tech]
         end_of_lifespan = introduced_year + lifespan
 
-        # Before the end of the lifespan, active technology is determined by continuation
-        if min(m.years) < yr < end_of_lifespan:
-            return m.active_technology[tech, yr] == m.continue_technology[tech, yr]
-
-        # At the end of the lifespan, active technology is determined by replacement or renewal
-        elif yr == end_of_lifespan:
+        # Determine replacement/renewal years
+        if (yr - introduced_year) % lifespan == 0 and (yr - introduced_year) >= lifespan:
+            # At replacement/renewal years
             return m.active_technology[tech, yr] == m.replace[tech, yr] + m.renew[tech, yr]
 
-        else:
-            m.active_technology[tech, yr] == m.continue_technology[tech, yr] + m.replace[tech, yr] + m.renew[tech, yr]
+        elif yr > introduced_year:
+            # Before or after replacement/renewal years
+            return m.active_technology[tech, yr] == m.continue_technology[tech, yr]
 
-        return Constraint.Skip
+        return Constraint.Skip  # Skip years outside the modeling range
 
     model.active_technology_constraint = Constraint(
         model.technologies, model.years, rule=active_technology_rule
     )
 
-    # l. Introduction Year Constraint
     def introduction_year_constraint_rule(m, tech, yr):
         introduction_year = data['technology_introduction'][tech]
         if yr < introduction_year:
@@ -240,13 +168,11 @@ def build_model_for_system(system_name, baseline_row, data):
         model.technologies, model.years, rule=introduction_year_constraint_rule
     )
 
-    # f. Ensure only one fuel is selected each year
     def fuel_selection_rule(m, yr):
         return sum(m.fuel_select[f, yr] for f in m.fuels) == 1
 
     model.fuel_selection_constraint = Constraint(model.years, rule=fuel_selection_rule)
 
-    # g. Ensure only one material is selected each year
     def material_selection_rule(m, yr):
         return sum(m.material_select[mat, yr] for mat in model.materials) == 1
 
@@ -257,7 +183,6 @@ def build_model_for_system(system_name, baseline_row, data):
         return production == sum(
             m.fuel_consumption[f, yr] / m.fuel_eff_param[f, yr] for f in m.fuels
         )
-
 
     model.production_constraint = Constraint(model.years, rule=production_constraint_rule)
 
@@ -271,28 +196,31 @@ def build_model_for_system(system_name, baseline_row, data):
         model.fuels, model.years, rule=fuel_consumption_limit_rule
     )
 
-    # j. Technology-Fuel Pairing Constraint
+    # Revised Technology-Fuel Pairing Constraint
     def fuel_technology_link_rule(m, yr, f):
-        compatible_replacements = [
+        compatible_technologies = [
             tech for tech in m.technologies if f in data['technology_fuel_pairs'].get(tech, [])
         ]
-        return sum(m.replace[tech, yr] for tech in compatible_replacements) >= m.fuel_select[f, yr]
+        return sum(
+            m.active_technology[tech, yr] for tech in compatible_technologies
+        ) >= m.fuel_select[f, yr]
 
     model.fuel_technology_link_constraint = Constraint(
         model.years, model.fuels, rule=fuel_technology_link_rule
     )
 
-    # k. Technology-Material Pairing Constraint
+    # Revised Technology-Material Pairing Constraint
     def material_technology_link_rule(m, yr, mat):
-        compatible_replacements = [
+        compatible_technologies = [
             tech for tech in m.technologies if mat in data['technology_material_pairs'].get(tech, [])
         ]
-        return sum(m.replace[tech, yr] for tech in compatible_replacements) >= m.material_select[mat, yr]
+        return sum(
+            m.active_technology[tech, yr] for tech in compatible_technologies
+        ) >= m.material_select[mat, yr]
 
     model.material_technology_link_constraint = Constraint(
         model.years, model.materials, rule=material_technology_link_rule
     )
-
 
     # Objective function with levelized capex and opex
     def total_cost_rule(m):
@@ -365,11 +293,6 @@ for system_name in data['baseline'].index:
         for yr in m.years:
             active_technology = None
 
-            # Check if any replacement occurs in this year
-            for tech in m.technologies:
-                if m.replace[tech, yr].value > 0.5:
-                    active_technology = tech
-                    break  # Only one replacement can happen per year
 
             # If no replacement occurred, the baseline technology remains active
             if not active_technology:
@@ -385,22 +308,24 @@ for system_name in data['baseline'].index:
                     "Technology": active_technology
                 })
 
-
-
-        # Save results
+        # Save the replacement count in the results dictionary
         results_dict[system_name] = {
             "Production": production_value,
             "Fuel Consumption": fuel_data,
-            "Technology Changes": technology_changes
+            "Technology Changes": technology_changes,
+            # "Replacements": replacements,  # List of replacements with year and technology
+            # "Total Replacements": replacement_count  # Total number of replacements
         }
 
     else:
         print(f"Solver failed for {system_name}. Status: {result.solver.status}, Condition: {result.solver.termination_condition}")
 #
 # Display results for all systems
+# Display results for all systems
 for system_name, results in results_dict.items():
     print(f"\n=== Results for {system_name} ===")
     print(f"Production: {results['Production']} tons")
+
     print("\nFuel Consumption:")
     for fc in results['Fuel Consumption']:
         print(f"  Year {fc['Year']}: {fc['Fuel']} - {fc['Consumption (tons)']} tons")
