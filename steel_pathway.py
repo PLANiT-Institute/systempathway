@@ -109,6 +109,14 @@ def build_model_for_system(system_name, baseline_row, data):
         domain=Binary,
         doc="1 if material is selected in a given year, else 0"
     )
+
+    # Decision variable for continuing the same technology
+    model.continue_technology = Var(
+        model.technologies, model.years,
+        domain=Binary,
+        doc="1 if the technology is continued from the previous year, else 0"
+    )
+
     model.replace = Var(
         model.technologies, model.years,
         domain=Binary,
@@ -131,6 +139,85 @@ def build_model_for_system(system_name, baseline_row, data):
         doc="1 if technology is active in a given year, else 0"
     )
 
+    # Define lifespan as a parameter
+    model.lifespan_param = Param(
+        model.technologies,
+        initialize=lambda m, tech: data['technology'].loc[tech, 'lifespan'],
+        default=0
+    )
+    # Constraints
+
+    def hard_baseline_fuel_rule(m, f, yr):
+        if yr == 2025:  # Lock the fuel selection for the initial year
+            baseline_fuel = baseline_row['fuel']
+            if f == baseline_fuel:
+                return m.fuel_select[f, yr] == 1  # Must use the baseline fuel
+            else:
+                return m.fuel_select[f, yr] == 0  # Other fuels cannot be selected
+        return Constraint.Skip
+
+    model.hard_baseline_fuel_constraint = Constraint(
+        model.fuels, model.years, rule=hard_baseline_fuel_rule
+    )
+
+    def first_year_constraint(m, tech, yr):
+
+        # First year: Only baseline technology can continue
+        if yr == min(m.years):
+            if tech == baseline_tech:
+                return m.continue_technology[tech, yr] == 1
+            else:
+                return m.continue_technology[tech, yr] + m.replace[tech, yr] + m.renew[tech, yr] == 0
+
+        return Constraint.Skip
+
+    model.first_year_constraint = Constraint(model.technologies, model.years, rule=first_year_constraint)
+
+    def enforce_continuation_before_lifespan(m, tech, yr):
+        introduced_year = baseline_row['introduced_year']
+        lifespan = m.lifespan_param[tech]
+        end_of_lifespan = introduced_year + lifespan
+
+        # From first year to end_of_lifespan - 1: Continuation only
+        if min(m.years) < yr < end_of_lifespan:
+            if tech == baseline_tech:
+                return m.continue_technology[tech, yr] == 1
+            else:
+                return m.continue_technology[tech, yr] + m.replace[tech, yr] + m.renew[tech, yr] == 0
+        return Constraint.Skip
+
+    model.enforce_continuation_before_lifespan_constraint = Constraint(
+        model.technologies, model.years, rule=enforce_continuation_before_lifespan
+    )
+
+    # If a technology is continued, it must have been active in the previous year
+    def continuity_active_rule(m, tech, yr):
+        if yr > min(m.years):  # Skip the first year
+            return m.continue_technology[tech, yr] <= m.active_technology[tech, yr - 1]
+        return Constraint.Skip
+
+    model.continuity_active_constraint = Constraint(
+        model.technologies, model.years, rule=continuity_active_rule
+    )
+
+    def active_technology_rule(m, tech, yr):
+        introduced_year = baseline_row['introduced_year']
+        lifespan = m.lifespan_param[tech]
+        end_of_lifespan = introduced_year + lifespan
+
+        # Before the end of the lifespan, active technology is determined by continuation
+        if min(m.years) < yr < end_of_lifespan:
+            return m.active_technology[tech, yr] == m.continue_technology[tech, yr]
+
+        # At the end of the lifespan, active technology is determined by replacement or renewal
+        if yr == end_of_lifespan:
+            return m.active_technology[tech, yr] == m.replace[tech, yr] + m.renew[tech, yr]
+
+        return Constraint.Skip
+
+    model.active_technology_constraint = Constraint(
+        model.technologies, model.years, rule=active_technology_rule
+    )
 
     # l. Introduction Year Constraint
     def introduction_year_constraint_rule(m, tech, yr):
@@ -160,6 +247,7 @@ def build_model_for_system(system_name, baseline_row, data):
         return production == sum(
             m.fuel_consumption[f, yr] / m.fuel_eff_param[f, yr] for f in m.fuels
         )
+
 
     model.production_constraint = Constraint(model.years, rule=production_constraint_rule)
 
@@ -195,22 +283,22 @@ def build_model_for_system(system_name, baseline_row, data):
         model.years, model.materials, rule=material_technology_link_rule
     )
 
-    # --- 3) Objective function ---
+    # Objective function with levelized capex and opex
     def total_cost_rule(m):
         return sum(
             sum(
-                # Capex if 'replace[tech, yr]' = 1
-                m.capex_param[tech, yr] * production * m.replace[tech, yr]
-                # Renewal if 'renew[tech, yr]' = 1
+                # Capex (levelized) for all active technologies
+                m.capex_param[tech, yr] * production * m.active_technology[tech, yr]
+                # Opex for all active technologies
+                + m.opex_param[tech, yr] * production * m.active_technology[tech, yr]
+                # Renewal costs
                 + m.renewal_param[tech, yr] * production * m.renew[tech, yr]
-                # Opex
-                + m.opex_param[tech, yr] * production
-                # Fuel cost
+                # Fuel costs
                 + sum(
                     m.fuel_cost_param[f, yr] * production * m.fuel_select[f, yr]
                     for f in m.fuels
                 )
-                # Material cost
+                # Material costs
                 + sum(
                     m.material_cost_param[mat, yr] * production * m.material_select[mat, yr]
                     for mat in m.materials
@@ -295,7 +383,7 @@ for system_name in data['baseline'].index:
 
     else:
         print(f"Solver failed for {system_name}. Status: {result.solver.status}, Condition: {result.solver.termination_condition}")
-
+#
 # Display results for all systems
 for system_name, results in results_dict.items():
     print(f"\n=== Results for {system_name} ===")
