@@ -290,7 +290,7 @@ def build_model_for_system(system_name, baseline_row, data):
     model.fuel_production_constraint = Constraint(model.years, rule=fuel_production_constraint_rule)
 
     def fuel_selection_rule(m, yr):
-        return sum(m.fuel_select[fuel, yr] for fuel in m.fuels) >= 1
+        return sum(m.fuel_select[fuel, yr] for fuel in m.fuels) == 1
 
     model.fuel_selection_constraint = Constraint(model.years, rule=fuel_selection_rule)
 
@@ -325,7 +325,7 @@ def build_model_for_system(system_name, baseline_row, data):
 
     # **Material Selection Constraint**
     def material_selection_rule(m, yr):
-        return sum(m.material_select[mat, yr] for mat in m.materials) >= 1
+        return sum(m.material_select[mat, yr] for mat in m.materials) == 1
     model.material_selection_constraint = Constraint(model.years, rule=material_selection_rule)
 
     # **Material Consumption Limit Constraint**

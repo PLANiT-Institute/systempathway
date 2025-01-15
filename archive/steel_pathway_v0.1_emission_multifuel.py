@@ -430,7 +430,7 @@ def build_model_for_system(system_name, baseline_row, data):
 
 
 # Load data
-file_path = 'database/steel_data.xlsx'
+file_path = '../database/steel_data.xlsx'
 data = load_data(file_path)
 solver = SolverFactory('glpk')
 results_dict = {}

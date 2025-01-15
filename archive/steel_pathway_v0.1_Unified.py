@@ -423,7 +423,7 @@ def build_unified_model(data):
 # main function for unified model
 # Load data
 # Load data
-file_path = "database/steel_data.xlsx"
+file_path = "../database/steel_data.xlsx"
 data = load_data(file_path)
 
 # Build and solve the model

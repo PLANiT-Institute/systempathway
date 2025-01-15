@@ -306,7 +306,7 @@ def build_unified_model(data):
 
 def main():
     # Load data
-    file_path = 'database/steel_data.xlsx'
+    file_path = '../database/steel_data.xlsx'
     data = load_data(file_path)
 
     # Build unified model
