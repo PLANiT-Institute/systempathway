@@ -99,6 +99,11 @@ def build_unified_model(data):
                                     default=0.0)
 
     # Lifespan and Introduction Year
+    production = data['baseline']['production'].to_dict()
+    model.production_param = Param(model.systems,
+                                   initialize=lambda m, sys: production[sys],
+                                   default = 0)
+
     introduced_year_data = data['baseline']['introduced_year'].to_dict()
     model.lifespan_param = Param(model.technologies,
                                  initialize=lambda m, tech: data['technology'].loc[tech, 'lifespan'],
@@ -310,6 +315,12 @@ def build_unified_model(data):
     model.introduction_year_constraint = Constraint(
         model.systems, model.technologies, model.years, rule=introduction_year_constraint_rule
     )
+
+    # Example: Minimum production per system per year
+    def minimum_production_rule(m, sys, yr):
+        return m.production[sys, yr] >= m.production_param[sys]
+
+    model.minimum_production_constraint = Constraint(model.systems, model.years, rule=minimum_production_rule)
 
     # 4.5. Fuel Constraints
     def fuel_production_constraint_rule(m, sys, yr):
