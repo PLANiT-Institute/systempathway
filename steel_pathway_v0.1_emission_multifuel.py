@@ -29,8 +29,25 @@ def load_data(file_path):
     data['opex'] = pd.read_excel(file_path, sheet_name='opex', index_col=0)
     data['renewal'] = pd.read_excel(file_path, sheet_name='renewal', index_col=0)
 
-    data['technology_fuel_pairs'] = pd.read_excel(file_path, sheet_name='technology_fuel_pairs').groupby('technology')['fuel'].apply(list).to_dict()
-    data['technology_material_pairs'] = pd.read_excel(file_path, sheet_name='technology_material_pairs').groupby('technology')['material'].apply(list).to_dict()
+    # Import and group Technology-Fuel Pairs
+    data['technology_fuel_pairs'] = pd.read_excel(file_path, sheet_name='technology_fuel_pairs') \
+        .groupby('technology')['fuel'].apply(list).to_dict()
+
+    # Import and structure fuel max ratios
+    technology_fuel_pairs_df = pd.read_excel(file_path, sheet_name='technology_fuel_pairs')
+    data['fuel_max_ratios'] = technology_fuel_pairs_df.set_index(['technology', 'fuel'])['max'].to_dict()
+
+    # Import and group Technology-Material Pairs
+    data['technology_material_pairs'] = pd.read_excel(file_path, sheet_name='technology_material_pairs') \
+        .groupby('technology')['material'].apply(list).to_dict()
+
+    # Import and structure material max ratios
+    technology_material_pairs_df = pd.read_excel(file_path, sheet_name='technology_material_pairs')
+    data['material_max_ratios'] = technology_material_pairs_df.set_index(['technology', 'material'])['max'].to_dict()
+
+    # Restructure the data into a dictionary
+    data['material_max_ratios'] = technology_material_pairs_df.set_index(['technology', 'material'])['max'].to_dict()
+
     data['technology_introduction'] = pd.read_excel(file_path, sheet_name='technology', index_col=0)['introduction'].to_dict()
 
     # Load emission-related data
@@ -38,7 +55,6 @@ def load_data(file_path):
     data['fuel_emission'] = pd.read_excel(file_path, sheet_name='fuel_emission', index_col=0)
     data['material_emission'] = pd.read_excel(file_path, sheet_name='material_emission', index_col=0)
     data['technology_ei'] = pd.read_excel(file_path, sheet_name='technology_ei', index_col=0)
-
 
     return data
 
@@ -98,46 +114,49 @@ def build_model_for_system(system_name, baseline_row, data):
 
     # **Variables**
     model.material_consumption = Var(model.materials, model.years, domain=NonNegativeReals)
-    model.emission_tech = Var(model.technologies, model.years, domain=NonNegativeReals)
+    model.emission_by_tech = Var(model.technologies, model.years, domain=NonNegativeReals)
 
+    # Parameters for maximum fuel and material ratios
+    # Initialize fuel max ratio parameter
+    model.fuel_max_ratio = Param(
+        model.technologies, model.fuels,
+        initialize=lambda m, tech, fuel: data['fuel_max_ratios'].get((tech, fuel), 0),
+        default=0.0
+    )
+
+    # Initialize material max ratio parameter
+    model.material_max_ratio = Param(
+        model.technologies, model.materials,
+        initialize=lambda m, tech, mat: data['material_max_ratios'].get((tech, mat), 0),
+        default=0.0
+    )
     # Constraints
 
-    # Emission Constraint Linearization
+    """
+    Emission Constraints
+    """
 
-
-    # i. Link fuel consumption and selection
-    M_BIG = 1e6  # A large number to link binary and continuous variables
-
-    # Emission Upper Bound Constraint
-    def emission_upper_bound_rule(m, tech, yr):
-        return m.emission_tech[tech, yr] <= m.technology_ei[tech, yr] * (
-            sum(m.fuel_emission[f, yr] * m.fuel_consumption[f, yr] for f in m.fuels) +
-            sum(m.material_emission[mat, yr] * m.material_consumption[mat, yr] for mat in m.materials)
+    def emission_by_tech_rule(m, tech, yr):
+        return m.emission_by_tech[tech, yr] ==(
+            m.technology_ei[tech, yr] * (
+                    sum(m.fuel_emission[f, yr] * m.fuel_consumption[f, yr] for f in m.fuels) +
+                    sum(m.material_emission[mat, yr] * m.material_consumption[mat, yr] for mat in m.materials)
+            )
         )
 
-    model.emission_upper = Constraint(model.technologies, model.years, rule=emission_upper_bound_rule)
-
-    # Emission Active Upper Bound Constraint
-    def emission_active_upper_rule(m, tech, yr):
-        return m.emission_tech[tech, yr] <= m.technology_ei[tech, yr] * M_BIG * m.active_technology[tech, yr]
-
-    model.emission_active_upper = Constraint(model.technologies, model.years, rule=emission_active_upper_rule)
-
-    # Emission Lower Bound Constraint
-    def emission_lower_bound_rule(m, tech, yr):
-        return m.emission_tech[tech, yr] >= m.technology_ei[tech, yr] * (
-            sum(m.fuel_emission[f, yr] * m.fuel_consumption[f, yr] for f in m.fuels) +
-            sum(m.material_emission[mat, yr] * m.material_consumption[mat, yr] for mat in m.materials)
-        ) - m.technology_ei[tech, yr] * M_BIG * (1 - m.active_technology[tech, yr])
-
-    model.emission_lower_bound = Constraint(model.technologies, model.years, rule=emission_lower_bound_rule)
+    model.emission_by_tech_constraint = Constraint(model.technologies, model.years, rule=emission_by_tech_rule)
 
     # Total Emission Constraint per Year
-    def total_emission_constraint_rule(m, yr):
-        return sum(m.emission_tech[tech, yr] for tech in m.technologies) <= m.emission_limit[yr]
+    def total_emission_limit_rule(m, yr):
+        return sum(
+            m.emission_by_tech[tech, yr] for tech in m.technologies
+        ) <= m.emission_limit[yr]
 
-    model.total_emission_constraint = Constraint(model.years, rule=total_emission_constraint_rule)
+    model.total_emission_limit_constraint = Constraint(model.years, rule=total_emission_limit_rule)
 
+    """
+    Other baseline constraints
+    """
 
     def hard_baseline_fuel_rule(m, f, yr):
         if yr == 2025:  # Lock the fuel selection for the initial year
@@ -232,19 +251,8 @@ def build_model_for_system(system_name, baseline_row, data):
             return m.replace[tech, yr] == 0
         return Constraint.Skip
 
-    model.introduction_year_constraint = Constraint(
-        model.technologies, model.years, rule=introduction_year_constraint_rule
-    )
+    model.introduction_year_constraint = Constraint(model.technologies, model.years, rule=introduction_year_constraint_rule)
 
-    def fuel_selection_rule(m, yr):
-        return sum(m.fuel_select[f, yr] for f in m.fuels) == 1
-
-    model.fuel_selection_constraint = Constraint(model.years, rule=fuel_selection_rule)
-
-    def material_selection_rule(m, yr):
-        return sum(m.material_select[mat, yr] for mat in model.materials) == 1
-
-    model.material_selection_constraint = Constraint(model.years, rule=material_selection_rule)
 
     # h. Production constraint
     def production_constraint_rule(m, yr):
@@ -254,8 +262,30 @@ def build_model_for_system(system_name, baseline_row, data):
 
     model.production_constraint = Constraint(model.years, rule=production_constraint_rule)
 
+
+    """
+    Constraints for Fuel
+    """
+    # Fuel Consumption Alignment with Production
+    def fuel_production_constraint_rule(m, yr):
+        return production == sum(
+            m.fuel_consumption[f, yr] / m.fuel_eff_param[f, yr] for f in m.fuels
+        )
+
+    model.fuel_production_constraint = Constraint(model.years, rule=fuel_production_constraint_rule)
+
+    # Ensure at least one fuel is selected per year
+    def fuel_selection_rule(m, yr):
+        return sum(m.fuel_select[f, yr] for f in m.fuels) <= len(m.fuels)
+
+    model.fuel_selection_constraint = Constraint(model.years, rule=fuel_selection_rule)
+
+    # Limit fuel consumption per selection
     def fuel_consumption_limit_rule(m, f, yr):
-        return m.fuel_consumption[f, yr] <= m.fuel_select[f, yr] * M_BIG
+        return (
+            m.fuel_consumption[f, yr]
+            <= m.fuel_select[f, yr] * m.fuel_eff_param[f, yr] * production
+        )
 
     model.fuel_consumption_limit_constraint = Constraint(
         model.fuels, model.years, rule=fuel_consumption_limit_rule
@@ -272,6 +302,35 @@ def build_model_for_system(system_name, baseline_row, data):
 
     model.fuel_technology_link_constraint = Constraint(
         model.years, model.fuels, rule=fuel_technology_link_rule
+    )
+
+    """
+    Constraints for Materials
+    """
+
+    # Material Consumption Alignment with Production
+    def material_production_constraint_rule(m, yr):
+        return production == sum(
+            m.material_consumption[mat, yr] / m.material_eff_param[mat, yr] for mat in m.materials
+        )
+
+    model.material_production_constraint = Constraint(model.years, rule=material_production_constraint_rule)
+
+    # Ensure at least one material is selected per year
+    def material_selection_rule(m, yr):
+        return sum(m.material_select[mat, yr] for mat in m.materials) <= 3
+
+    model.material_selection_constraint = Constraint(model.years, rule=material_selection_rule)
+
+    # Limit material consumption per selection
+    def material_consumption_limit_rule(m, mat, yr):
+        return (
+                m.material_consumption[mat, yr]
+                <= m.material_select[mat, yr] * m.material_eff_param[mat, yr] * production
+        )
+
+    model.material_consumption_limit_constraint = Constraint(
+        model.materials, model.years, rule=material_consumption_limit_rule
     )
 
     # Revised Technology-Material Pairing Constraint
@@ -350,6 +409,19 @@ for system_name in data['baseline'].index:
             if model.fuel_select[f, yr].value > 0.5
         ]
 
+        # Extract material consumption
+        material_data = [
+            {
+                "Year": yr,
+                "Material": mat,
+                "Consumption (tons)": model.material_consumption[mat, yr].value,
+                "Share": model.material_consumption[mat, yr].value / production_value
+            }
+            for yr in model.years
+            for mat in model.materials
+            if model.material_consumption[mat, yr].value > 0
+        ]
+
         # Extract technology changes
         technology_changes = [
             {
@@ -372,7 +444,9 @@ for system_name in data['baseline'].index:
         emissions_results = []
         for yr in model.years:
             total_emission = sum(
-                model.emission_tech[tech, yr].value for tech in model.technologies
+                model.emission_by_tech[tech, yr].value
+                for tech in model.technologies
+                if model.emission_by_tech[tech, yr].value is not None
             )
             emission_limit = model.emission_limit[yr]
             emissions_results.append({
@@ -386,6 +460,7 @@ for system_name in data['baseline'].index:
         results_dict[system_name] = {
             "Production": production_value,
             "Fuel Consumption": fuel_data,
+            "Material Consumption": material_data,
             "Technology Changes": technology_changes,
             "Emissions": emissions_results
         }
@@ -400,6 +475,10 @@ for system_name, results in results_dict.items():
     print("\nFuel Consumption:")
     for fc in results['Fuel Consumption']:
         print(f"  Year {fc['Year']}: {fc['Fuel']} - {fc['Consumption (tons)']} energy unit")
+
+    print("\nMaterial Consumption:")
+    for mc in results['Material Consumption']:
+        print(f"  Year {mc['Year']}: {mc['Material']} - {mc['Consumption (tons)']} tons, Share: {mc['Share']:.2%}")
 
     print("\nTechnology Changes:")
     for tc in results['Technology Changes']:
