@@ -66,7 +66,7 @@ def build_unified_model(data):
     and is excluded from the optimization years.
     """
     model = ConcreteModel()
-    BIG_M = 1e9
+    BIG_M = 1e6
     # Unified Sets
     model.systems = Set(initialize=data['baseline'].index.tolist())
     model.technologies = Set(initialize=data['technology'].index.tolist())
@@ -117,6 +117,7 @@ def build_unified_model(data):
     model.fuel_consumption = Var(model.systems, model.fuels, model.years, domain=NonNegativeReals)
     model.material_consumption = Var(model.systems, model.materials, model.years, domain=NonNegativeReals)
     model.emission_by_tech = Var(model.systems, model.technologies, model.years, domain=NonNegativeReals)
+    model.fuel_consumption_active = Var(model.systems, model.fuels, model.years, domain=NonNegativeReals)
 
     # Constraints
 
@@ -275,41 +276,57 @@ def build_unified_model(data):
 
     model.production_constraint = Constraint(model.systems, model.years, rule=production_constraint_rule)
 
+    def min_production_param_rule(m, sys):
+        return data['baseline'].loc[sys, 'production']
+
+    model.min_production = Param(model.systems, initialize=min_production_param_rule)
+
+
+    def minimum_production_rule(m, sys, yr):
+        return sum(
+            m.fuel_consumption[sys, f, yr] / m.fuel_eff_param[f, yr]
+            for f in m.fuels
+        ) >= m.min_production[sys]
+
+    model.minimum_production_constraint = Constraint(
+        model.systems, model.years, rule=minimum_production_rule
+    )
+
     """
     Constraints for Fuel (Unified Model)
     """
 
-    # Production Alignment with Fuel Consumption
     def fuel_production_constraint_rule(m, sys, yr):
         return m.production[sys, yr] == sum(
-            m.fuel_consumption[sys, f, yr] * m.fuel_eff_param[f, yr]
+            m.fuel_consumption[sys, f, yr] / m.fuel_eff_param[f, yr]
             for f in m.fuels
         )
 
     model.fuel_production_constraint = Constraint(model.systems, model.years, rule=fuel_production_constraint_rule)
 
-    # Ensure Exactly One Fuel Is Selected Per Year
+    # Ensure at least one fuel is selected per year (Per System)
     def fuel_selection_rule(m, sys, yr):
-        return sum(m.fuel_select[sys, f, yr] for f in m.fuels) == 1
+        return sum(m.fuel_select[sys, f, yr] for f in m.fuels) <=3
 
-    model.fuel_selection_constraint = Constraint(model.systems, model.years, rule=fuel_selection_rule)
+    model.fuel_selection_constraint = Constraint(
+        model.systems, model.years, rule=fuel_selection_rule
+    )
 
-    # Fuel Consumption Limits for Selected Fuels
     def fuel_consumption_limit_rule(m, sys, f, yr):
-        return m.fuel_consumption[sys, f, yr] <= m.fuel_select[sys, f, yr] * m.production[sys, yr]
+        return m.fuel_consumption[sys, f, yr] <= m.fuel_select[sys, f, yr] * 1e12
 
     model.fuel_consumption_limit_constraint = Constraint(
         model.systems, model.fuels, model.years, rule=fuel_consumption_limit_rule
     )
 
-    # Fuel-Technology Compatibility
     def fuel_technology_link_rule(m, sys, yr, f):
         compatible_technologies = [
             tech for tech in m.technologies if f in data['technology_fuel_pairs'].get(tech, [])
         ]
-        return sum(
+        # If no compatible technology, fuel cannot be selected
+        return m.fuel_select[sys, f, yr] <= sum(
             m.active_technology[sys, tech, yr] for tech in compatible_technologies
-        ) >= m.fuel_select[sys, f, yr]
+        )
 
     model.fuel_technology_link_constraint = Constraint(
         model.systems, model.years, model.fuels, rule=fuel_technology_link_rule
@@ -319,26 +336,28 @@ def build_unified_model(data):
     Constraints for Materials (Unified Model)
     """
 
-    # Material Consumption Alignment with Production
+    # Material Production Constraint
     def material_production_constraint_rule(m, sys, yr):
-        # Production is matched to the sum of material consumption adjusted by efficiency
-        return m.production[sys, yr] == sum(
-            m.material_consumption[sys, mat, yr] * m.material_eff_param[mat, yr]
+        return sum(
+            m.material_consumption[sys, mat, yr] / m.material_eff_param[mat, yr]
             for mat in m.materials
-        )
+        ) <= m.production[sys, yr]
 
-    model.material_production_constraint = Constraint(model.systems, model.years,
-                                                      rule=material_production_constraint_rule)
+    model.material_production_constraint = Constraint(
+        model.systems, model.years, rule=material_production_constraint_rule
+    )
 
-    # Ensure at least one material is selected per year
+    # Ensure at least one material is selected per year (Per System)
     def material_selection_rule(m, sys, yr):
-        return sum(m.material_select[sys, mat, yr] for mat in m.materials) == 1
+        return sum(m.material_select[sys, mat, yr] for mat in m.materials) <= 3
 
-    model.material_selection_constraint = Constraint(model.systems, model.years, rule=material_selection_rule)
+    model.material_selection_constraint = Constraint(
+        model.systems, model.years, rule=material_selection_rule
+    )
 
-    # Material Consumption Limits for Selected Materials
+    # Material Consumption Limit
     def material_consumption_limit_rule(m, sys, mat, yr):
-        return m.material_consumption[sys, mat, yr] <= m.material_select[sys, mat, yr] * BIG_M
+        return m.material_consumption[sys, mat, yr] <= m.material_select[sys, mat, yr] * 1e12
 
     model.material_consumption_limit_constraint = Constraint(
         model.systems, model.materials, model.years, rule=material_consumption_limit_rule
@@ -349,9 +368,10 @@ def build_unified_model(data):
         compatible_technologies = [
             tech for tech in m.technologies if mat in data['technology_material_pairs'].get(tech, [])
         ]
-        return sum(
+        # If no compatible technology, material cannot be selected
+        return m.material_select[sys, mat, yr] <= sum(
             m.active_technology[sys, tech, yr] for tech in compatible_technologies
-        ) >= m.material_select[sys, mat, yr]
+        )
 
     model.material_technology_link_constraint = Constraint(
         model.systems, model.years, model.materials, rule=material_technology_link_rule
@@ -400,7 +420,6 @@ def build_unified_model(data):
 
     return model
 
-
 # main function for unified model
 # Load data
 # Load data
@@ -411,7 +430,6 @@ data = load_data(file_path)
 model = build_unified_model(data)
 solver = SolverFactory("glpk")
 result = solver.solve(model, tee=False)
-
 
 # Check solver status
 if result.solver.status == 'ok' and result.solver.termination_condition == 'optimal':
@@ -438,7 +456,6 @@ if result.solver.status == 'ok' and result.solver.termination_condition == 'opti
                 "Year": yr,
                 "Material": mat,
                 "Consumption (tons)": model.material_consumption[system_name, mat, yr].value,
-                "Share": model.material_consumption[system_name, mat, yr].value / production_value
             }
             for yr in model.years
             for mat in model.materials
@@ -479,6 +496,22 @@ if result.solver.status == 'ok' and result.solver.termination_condition == 'opti
             })
             print(f"Total Emissions for {system_name} in {yr}: {total_emission} <= Limit: {emission_limit}")
 
+        # Global Emission Calculation
+        global_emissions = []
+
+        for yr in model.years:
+            total_global_emission = sum(
+                model.emission_by_tech[sys, tech, yr].value
+                for sys in model.systems
+                for tech in model.technologies
+                if model.emission_by_tech[sys, tech, yr].value is not None
+            )
+            global_emissions.append({
+                "Year": yr,
+                "Global Emissions": total_global_emission,
+                "Global Emission Limit": data['emission'].loc['global', yr]
+            })
+
         # Store results
         results_dict[system_name] = {
             "Production": production_value,
@@ -499,7 +532,7 @@ if result.solver.status == 'ok' and result.solver.termination_condition == 'opti
 
         print("\nMaterial Consumption:")
         for mc in results['Material Consumption']:
-            print(f"  Year {mc['Year']}: {mc['Material']} - {mc['Consumption (tons)']} tons, Share: {mc['Share']:.2%}")
+            print(f"  Year {mc['Year']}: {mc['Material']} - {mc['Consumption (tons)']} tons")
 
         print("\nTechnology Changes:")
         for tc in results['Technology Changes']:
@@ -511,3 +544,11 @@ if result.solver.status == 'ok' and result.solver.termination_condition == 'opti
 else:
     print(f"Solver failed. Status: {result.solver.status}, Condition: {result.solver.termination_condition}")
 
+# Display Global Emissions
+print("\n=== Global Emissions Across All Systems ===")
+for emission in global_emissions:
+    print(
+        f"Year {emission['Year']}: "
+        f"Total Global Emissions: {emission['Global Emissions']} "
+        f"<= Global Limit: {emission['Global Emission Limit']}"
+    )

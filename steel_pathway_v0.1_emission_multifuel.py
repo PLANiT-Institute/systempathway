@@ -437,7 +437,6 @@ for system_name in data['baseline'].index:
                 "Year": yr,
                 "Material": mat,
                 "Consumption (tons)": model.material_consumption[mat, yr].value,
-                "Share": model.material_consumption[mat, yr].value / production_value
             }
             for yr in model.years
             for mat in model.materials
@@ -500,7 +499,7 @@ for system_name, results in results_dict.items():
 
     print("\nMaterial Consumption:")
     for mc in results['Material Consumption']:
-        print(f"  Year {mc['Year']}: {mc['Material']} - {mc['Consumption (tons)']} tons, Share: {mc['Share']:.2%}")
+        print(f"  Year {mc['Year']}: {mc['Material']} - {mc['Consumption (tons)']} tons")
 
     print("\nTechnology Changes:")
     for tc in results['Technology Changes']:
