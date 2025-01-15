@@ -206,24 +206,6 @@ def build_model_for_system(system_name, baseline_row, data):
     """
     Renewal Rule
     """
-
-    # def enforce_continuation_before_lifespan(m, tech, yr):
-    #     introduced_year = baseline_row['introduced_year']
-    #     lifespan = m.lifespan_param[tech]
-    #     end_of_lifespan = introduced_year + lifespan
-    #
-    #     # From first year to end_of_lifespan - 1: Continuation only
-    #     if min(m.years) < yr < end_of_lifespan:
-    #         if tech == baseline_tech:
-    #             return m.continue_technology[tech, yr] == 1
-    #         else:
-    #             return m.continue_technology[tech, yr] + m.replace[tech, yr] + m.renew[tech, yr] == 0
-    #     return Constraint.Skip
-    #
-    # model.enforce_continuation_before_lifespan_constraint = Constraint(
-    #     model.technologies, model.years, rule=enforce_continuation_before_lifespan
-    # )
-
     def define_activation_change_rule(m, tech, yr):
         if yr > min(m.years):
             # activation_change = 1 if tech becomes active in yr from inactive in yr-1
@@ -331,23 +313,6 @@ def build_model_for_system(system_name, baseline_row, data):
         model.years, model.fuels, rule=fuel_technology_link_rule
     )
 
-    # def fuel_max_share_rule(m, tech, fuel, yr):
-    #     if yr > min(m.years):  # Skip the first year
-    #     # Check if the fuel is compatible with the technology
-    #         if fuel in data['technology_fuel_pairs'].get(tech, []):
-    #             # Total fuel consumption for the technology in the given year
-    #             total_fuel_consumption = sum(
-    #                 m.fuel_consumption[f, yr]
-    #                 for f in data['technology_fuel_pairs'][tech]
-    #             )
-    #             # Ensure the fuel's consumption does not exceed its maximum allowed share
-    #             return m.fuel_consumption[fuel, yr] <= m.fuel_max_ratio[tech, fuel] * total_fuel_consumption
-    #     return Constraint.Skip
-    #
-    # model.fuel_max_share_constraint = Constraint(
-    #     model.technologies, model.fuels, model.years, rule=fuel_max_share_rule
-    # )
-
     """
     Constraints for Materials
     """
@@ -384,23 +349,6 @@ def build_model_for_system(system_name, baseline_row, data):
     model.material_technology_link_constraint = Constraint(
         model.years, model.materials, rule=material_technology_link_rule
     )
-
-    # def material_max_share_rule(m, tech, mat, yr):
-    #     if yr > min(m.years):  # Skip the first year
-    #         # Check if the material is compatible with the technology
-    #         if mat in data['technology_material_pairs'].get(tech, []):
-    #             # Total material consumption for the technology in the given year
-    #             total_material_consumption = sum(
-    #                 m.material_consumption[mat_i, yr]
-    #                 for mat_i in data['technology_material_pairs'][tech]
-    #             )
-    #             # Ensure the material's consumption does not exceed its maximum allowed share
-    #             return m.material_consumption[mat, yr] <= m.material_max_ratio[tech, mat] * total_material_consumption
-    #     return Constraint.Skip
-    #
-    # model.material_max_share_constraint = Constraint(
-    #     model.technologies, model.materials, model.years, rule=material_max_share_rule
-    # )
 
     def total_cost_rule(m):
         return sum(
