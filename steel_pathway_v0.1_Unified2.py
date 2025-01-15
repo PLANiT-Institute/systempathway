@@ -335,34 +335,6 @@ def build_unified_model(data):
 
     model.fuel_selection_constraint = Constraint(model.systems, model.years, rule=fuel_selection_rule)
 
-    # 4.5.1. Fuel Consumption Limit Constraints (Linearized with Big-M)
-    # Define maximum possible fuel consumption based on production and efficiency
-    # To prevent an extremely large M, calculate M_fuel based on data
-    max_fuel_efficiency = max(data['fuel_efficiency'].max().max(), 1)  # Ensure at least 1 to prevent M=0
-    max_production = data['baseline']['production'].max()
-    M_fuel = max_fuel_efficiency * max_production
-
-    def fuel_consumption_limit_upper_rule(m, sys, f, yr):
-        return m.fuel_consumption[sys, f, yr] <= m.fuel_eff_param[f, yr] * m.production[sys, yr]
-
-    model.fuel_consumption_limit_upper_constraint = Constraint(
-        model.systems, model.fuels, model.years, rule=fuel_consumption_limit_upper_rule
-    )
-
-    def fuel_consumption_limit_binary_rule(m, sys, f, yr):
-        return m.fuel_consumption[sys, f, yr] <= M_fuel * m.fuel_select[sys, f, yr]
-
-    model.fuel_consumption_limit_binary_constraint = Constraint(
-        model.systems, model.fuels, model.years, rule=fuel_consumption_limit_binary_rule
-    )
-
-    def fuel_consumption_limit_lower_rule(m, sys, f, yr):
-        return m.fuel_consumption[sys, f, yr] >= m.fuel_eff_param[f, yr] * m.production[sys, yr] - M_fuel * (1 - m.fuel_select[sys, f, yr])
-
-    model.fuel_consumption_limit_lower_constraint = Constraint(
-        model.systems, model.fuels, model.years, rule=fuel_consumption_limit_lower_rule
-    )
-
     # Fuel-Technology Link Constraint
     def fuel_technology_link_rule(m, sys, yr, f):
         compatible_technologies = [
@@ -379,29 +351,32 @@ def build_unified_model(data):
     # 4.6. Material Constraints
     # 4.6.1. Material Consumption Limit Constraints (Linearized with Big-M)
     # Define maximum possible material consumption based on production and efficiency
-    max_material_efficiency = max(data['material_efficiency'].max().max(), 1)  # Ensure at least 1 to prevent M=0
-    M_material = max_material_efficiency * max_production
+    # max_material_efficiency = max(data['material_efficiency'].max().max(), 1)  # Ensure at least 1 to prevent M=0
+    # M_material = max_material_efficiency * max_production
 
-    def material_consumption_limit_upper_rule(m, sys, mat, yr):
-        return m.material_consumption[sys, mat, yr] <= m.material_eff_param[mat, yr] * m.production[sys, yr]
+    # 4.6. Material Constraints
 
-    model.material_consumption_limit_upper_constraint = Constraint(
-        model.systems, model.materials, model.years, rule=material_consumption_limit_upper_rule
-    )
+    # 4.6.0. Material Production Constraint
+    def material_production_constraint_rule(m, sys, yr):
+        return m.production[sys, yr] == sum(
+            m.material_consumption[sys, mat, yr] / m.material_eff_param[mat, yr] for mat in m.materials
+        )
 
-    def material_consumption_limit_binary_rule(m, sys, mat, yr):
-        return m.material_consumption[sys, mat, yr] <= M_material * m.material_select[sys, mat, yr]
+    model.material_production_constraint = Constraint(model.systems, model.years,
+                                                      rule=material_production_constraint_rule)
 
-    model.material_consumption_limit_binary_constraint = Constraint(
-        model.systems, model.materials, model.years, rule=material_consumption_limit_binary_rule
-    )
+    # 4.5. Fuel Constraints
+    def material_production_constraint_rule(m, sys, yr):
+        return m.production[sys, yr] == sum(
+            m.material_consumption[sys, mat, yr] / m.material_eff_param[mat, yr] for mat in m.materials
+        )
 
-    def material_consumption_limit_lower_rule(m, sys, mat, yr):
-        return m.material_consumption[sys, mat, yr] >= m.material_eff_param[mat, yr] * m.production[sys, yr] - M_material * (1 - m.material_select[sys, mat, yr])
+    model.material_production_constraint = Constraint(model.systems, model.years, rule=material_production_constraint_rule)
 
-    model.material_consumption_limit_lower_constraint = Constraint(
-        model.systems, model.materials, model.years, rule=material_consumption_limit_lower_rule
-    )
+    def material_selection_rule(m, sys, yr):
+        return sum(m.material_select[sys, mat, yr] for mat in m.materials) == 1
+
+    model.material_selection_constraint = Constraint(model.systems, model.years, rule=material_selection_rule)
 
     # Material-Technology Link Constraint
     def material_technology_link_rule(m, sys, yr, mat):
@@ -418,6 +393,8 @@ def build_unified_model(data):
 
     # 4.7. Linearization of Auxiliary Product Terms (prod_active, replace_prod_active, renew_prod_active)
     # Since active_technology, replace, renew are binary and production is continuous, linearize with Big-M
+
+    M_fuel = max(model.production_param.values()) * max(model.fuel_eff_param.values())
 
     # 4.7.1. prod_active = production * active_technology
     def prod_active_limit_rule(m, sys, tech, yr):
@@ -514,23 +491,6 @@ def build_unified_model(data):
 
     model.total_cost = Objective(rule=total_cost_rule, sense=minimize)
 
-    # --------------------------
-    # 6. Remove Original Nonlinear Constraints
-    # --------------------------
-    # **Important:** Ensure that all original nonlinear constraints are removed or commented out.
-    # In this corrected model, the following nonlinear constraint has been **removed**:
-    #
-    # def material_consumption_limit_rule(m, sys, mat, yr):
-    #     return (
-    #         m.material_consumption[sys, mat, yr]
-    #         <= m.material_eff_param[mat, yr] * m.production[sys, yr] * m.material_select[sys, mat, yr]
-    #     )
-    #
-    # model.material_consumption_limit_constraint = Constraint(
-    #     model.systems, model.materials, model.years, rule=material_consumption_limit_rule
-    # )
-    #
-    # Similarly, ensure any other nonlinear constraints are removed.
 
     return model
 

@@ -316,6 +316,7 @@ def build_model_for_system(system_name, baseline_row, data):
     """
     Constraints for Materials
     """
+
     # **Material Production Constraint**
     def material_production_constraint_rule(m, yr):
         return production == sum(
