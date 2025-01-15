@@ -160,6 +160,7 @@ def build_unified_model(data):
 
     # 3. Link Fuel Consumption and Selection
     M_BIG = 1e6  # A large number to link binary and continuous variables
+    model.fuel_consumption_active = Var(model.systems, model.fuels, model.years, domain=NonNegativeReals)
 
     def fuel_consumption_limit_rule(m, sys, f, yr):
         return m.fuel_consumption[sys, f, yr] <= m.fuel_select[sys, f, yr] * M_BIG

@@ -158,6 +158,28 @@ def build_model_for_system(system_name, baseline_row, data):
     Other baseline constraints
     """
 
+    def technology_transition_rule(m, tech, yr):
+        if yr > min(m.years):
+            # Ensure that if a technology is active in the current year, it was either continued, replaced, or renewed
+            return (
+                    m.active_technology[tech, yr] ==
+                    m.continue_technology[tech, yr] +
+                    m.replace[tech, yr] +
+                    m.renew[tech, yr]
+            )
+        return Constraint.Skip
+
+    model.technology_transition_constraint = Constraint(
+        model.technologies, model.years, rule=technology_transition_rule
+    )
+
+    def one_active_technology_rule(m, yr):
+        return sum(m.active_technology[tech, yr] for tech in m.technologies) == 1
+
+    model.one_active_technology_constraint = Constraint(
+        model.years, rule=one_active_technology_rule
+    )
+
     def hard_baseline_fuel_rule(m, f, yr):
         if yr == 2025:  # Lock the fuel selection for the initial year
             baseline_fuel = baseline_row['fuel']
@@ -248,7 +270,7 @@ def build_model_for_system(system_name, baseline_row, data):
     def introduction_year_constraint_rule(m, tech, yr):
         introduction_year = data['technology_introduction'][tech]
         if yr < introduction_year:
-            return m.replace[tech, yr] == 0
+            return m.replace[tech, yr] + m.continue_technology[tech, yr] + m.renew[tech, yr] == 0
         return Constraint.Skip
 
     model.introduction_year_constraint = Constraint(model.technologies, model.years, rule=introduction_year_constraint_rule)
@@ -427,13 +449,13 @@ for system_name in data['baseline'].index:
             {
                 "Year": yr,
                 "Technology": next(
-                    (tech for tech in model.technologies if model.active_technology[tech, yr].value > 0.5),
+                    (tech for tech in model.technologies if model.active_technology[tech, yr].value == 1),
                     "None"
                 ),
                 "Status": (
-                    "replace" if any(model.replace[tech, yr].value > 0.5 for tech in model.technologies) else
-                    "renew" if any(model.renew[tech, yr].value > 0.5 for tech in model.technologies) else
-                    "continue" if any(model.continue_technology[tech, yr].value > 0.5 for tech in model.technologies) else
+                    "replace" if any(model.replace[tech, yr].value == 1 for tech in model.technologies) else
+                    "renew" if any(model.renew[tech, yr].value == 1 for tech in model.technologies) else
+                    "continue" if any(model.continue_technology[tech, yr].value == 1 for tech in model.technologies) else
                     "inactive"
                 )
             }
