@@ -276,7 +276,7 @@ def build_unified_model(data):
 
     # Fuel Constraints
     def fuel_selection_rule(m, system, yr):
-        return sum(m.fuel_select[system, f, yr] for f in m.fuels) <= len(m.fuels)
+        return sum(m.fuel_select[system, f, yr] for f in m.fuels) <= 3
 
     model.fuel_selection_constraint = Constraint(model.systems, model.years, rule=fuel_selection_rule)
 
