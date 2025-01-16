@@ -301,17 +301,15 @@ def build_model_for_system(system_name, baseline_row, data):
         model.fuels, model.years, rule=fuel_consumption_limit_rule
     )
 
-    def fuel_technology_link_rule(m, yr, f):
-        compatible_technologies = [
-            tech for tech in m.technologies if f in data['technology_fuel_pairs'].get(tech, [])
-        ]
-        return sum(
-            m.active_technology[tech, yr] for tech in compatible_technologies
-        ) >= m.fuel_select[f, yr]
+    def technology_fuel_link_rule(m, yr, tech):
+        compatible_fuels = data['technology_fuel_pairs'].get(tech, [])
+        # If a technology is active, at least one of its compatible fuels must be selected
+        return sum(m.fuel_select[f, yr] for f in compatible_fuels) >= m.active_technology[tech, yr]
 
-    model.fuel_technology_link_constraint = Constraint(
-        model.years, model.fuels, rule=fuel_technology_link_rule
+    model.technology_fuel_link_constraint = Constraint(
+        model.years, model.technologies, rule=technology_fuel_link_rule
     )
+
 
     """
     Constraints for Materials
@@ -339,16 +337,14 @@ def build_model_for_system(system_name, baseline_row, data):
         model.materials, model.years, rule=material_consumption_limit_rule
     )
 
-    # **Material-Technology Link Constraint**
-    def material_technology_link_rule(m, yr, mat):
-        compatible_technologies = [
-            tech for tech in m.technologies if mat in data['technology_material_pairs'].get(tech, [])
-        ]
-        return sum(
-            m.active_technology[tech, yr] for tech in compatible_technologies
-        ) >= m.material_select[mat, yr]
-    model.material_technology_link_constraint = Constraint(
-        model.years, model.materials, rule=material_technology_link_rule
+    # **Technology-Material Link Constraint**
+    def technology_material_link_rule(m, yr, tech):
+        compatible_materials = data['technology_material_pairs'].get(tech, [])
+        # If a technology is active, at least one of its compatible materials must be selected
+        return sum(m.material_select[mat, yr] for mat in compatible_materials) >= m.active_technology[tech, yr]
+
+    model.technology_material_link_constraint = Constraint(
+        model.years, model.technologies, rule=technology_material_link_rule
     )
 
     def total_cost_rule(m):
@@ -478,13 +474,26 @@ for system_name in data['baseline'].index:
                     "Active": model.active_technology[tech, yr].value
                 })
 
-        # Print technology statuses in requested format
-        print("\n=== Technology Statuses ===")
-        for status in technology_statuses:
-            if status['Active'] == 1:
-                print(f"Year {status['Year']}: Technology {status['Technology']} - "
-                      f"Continue: {status['Continue']}, Replace: {status['Replace']}, "
-                      f"Renew: {status['Renew']}, Active: {status['Active']}")
+        technology_df = pd.DataFrame(technology_statuses)
+
+        # Filter rows where at least one status indicator is 1
+        technology_df_filtered = technology_df[
+            technology_df[['Active', 'Continue', 'Replace', 'Renew']].sum(axis=1) >= 1
+            ]
+
+        # Set MultiIndex if 'System' is available
+        if 'System' in technology_df_filtered.columns:
+            technology_df_filtered.set_index(['System', 'Year', 'Technology'], inplace=True)
+        else:
+            technology_df_filtered.set_index(['Year', 'Technology'], inplace=True)
+
+        # Rearrange columns
+        desired_columns = ['Continue', 'Replace', 'Renew', 'Active']
+        technology_df_filtered = technology_df_filtered[desired_columns]
+
+        # Display the DataFrame
+        print("\n=== Technology Statuses ===\n")
+        print(technology_df_filtered)
 
     else:
         print(
