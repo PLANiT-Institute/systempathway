@@ -504,29 +504,21 @@ def build_unified_model(data):
     # model.fuel_consumption_limit_constraint = Constraint(
     #     model.systems, model.fuels, model.years, rule=fuel_consumption_limit_rule
     # )
+    # 6. Minimum Fuel Share Constraint
+    def fuel_min_share_constraint_rule(m, sys, tech, f, yr):
+        # Get the minimum allowable share for the (technology, fuel) combination
+        min_share = data['fuel_min_ratio'].get((tech, f), 0)
+        return m.fuel_consumption[sys, f, yr] >= (
+                min_share * m.total_fuel_consumption[sys, yr] - M_fuel * (1 - m.active_technology[sys, tech, yr])
+        )
 
-    # # 6. Minimum Fuel Share Constraint
-    # def fuel_min_share_constraint_rule(m, sys, tech, f, yr):
-    #     # Get the minimum allowable share for the (technology, fuel) combination
-    #     min_share = data['fuel_min_ratio'].get((tech, f), 0)
-    #     return m.fuel_consumption[sys, f, yr] >= (
-    #             min_share * m.total_fuel_consumption[sys, yr] - M_fuel * (1 - m.active_technology[sys, tech, yr])
-    #     )
-    #
-    # model.fuel_min_share_constraint = Constraint(
-    #     model.systems, model.technologies, model.fuels, model.years, rule=fuel_min_share_constraint_rule
-    # )
-
-    # 4.6. Material Constraints
-    # 4.6.1. Material Consumption Limit Constraints (Linearized with Big-M)
-    # Define maximum possible material consumption based on production and efficiency
-    # max_material_efficiency = max(data['material_efficiency'].max().max(), 1)  # Ensure at least 1 to prevent M=0
-    # M_material = max_material_efficiency * max_production
+    model.fuel_min_share_constraint = Constraint(
+        model.systems, model.technologies, model.fuels, model.years, rule=fuel_min_share_constraint_rule
+    )
 
     # 4.6. Material Constraints
 
     M_mat = max(model.production_param.values()) * max(model.material_eff_param.values())  # Adjust based on the problem scale
-
 
     # 4.6.0. Material Production Constraint
     def material_production_constraint_rule(m, sys, yr):
@@ -567,6 +559,17 @@ def build_unified_model(data):
         model.systems, model.technologies, model.materials, model.years, rule=material_max_share_constraint_rule
     )
 
+    # 6. Minimum Material Share Constraint
+    def material_min_share_constraint_rule(m, sys, tech, mat, yr):
+        # Get the minimum allowable share for the (technology, material) combination
+        min_share = data['material_min_ratio'].get((tech, mat), 0)
+        return m.material_consumption[sys, mat, yr] >= (
+                min_share * m.total_material_consumption[sys, yr] - M_mat * (1 - m.active_technology[sys, tech, yr])
+        )
+
+    model.material_min_share_constraint = Constraint(
+        model.systems, model.technologies, model.materials, model.years, rule=material_min_share_constraint_rule
+    )
 
     # # 4. Material Consumption Limit
     # def material_consumption_limit_rule(m, sys, mat, yr):
@@ -576,21 +579,10 @@ def build_unified_model(data):
     # model.material_consumption_limit_constraint = Constraint(
     #     model.systems, model.materials, model.years, rule=material_consumption_limit_rule
     # )
-    # # 6. Minimum Material Share Constraint
-    # def material_min_share_constraint_rule(m, sys, tech, mat, yr):
-    #     # Get the minimum allowable share for the (technology, material) combination
-    #     min_share = data['material_min_ratio'].get((tech, mat), 0)
-    #     return m.material_consumption[sys, mat, yr] >= (
-    #             min_share * m.total_material_consumption[sys, yr] - M_mat * (1 - m.active_technology[sys, tech, yr])
-    #     )
-    #
-    # model.material_min_share_constraint = Constraint(
-    #     model.systems, model.technologies, model.materials, model.years, rule=material_min_share_constraint_rule
-    # )
 
-    # 4.7. Linearization of Auxiliary Product Terms (prod_active, replace_prod_active, renew_prod_active)
-    # Since active_technology, replace, renew are binary and production is continuous, linearize with Big-M
-
+    """
+    Objective Function
+    """
 
     # 4.7.1. prod_active = production * active_technology
     def prod_active_limit_rule(m, sys, tech, yr):
