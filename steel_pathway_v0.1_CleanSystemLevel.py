@@ -296,13 +296,6 @@ def build_model_for_system(system_name, baseline_row, data):
 
     model.fuel_selection_constraint = Constraint(model.years, rule=fuel_selection_rule)
 
-    def fuel_consumption_limit_rule(m, f, yr):
-        return m.fuel_consumption[f, yr] <= m.fuel_select[f, yr] * m.fuel_eff_param[f, yr] * production
-
-    model.fuel_consumption_limit_constraint = Constraint(
-        model.fuels, model.years, rule=fuel_consumption_limit_rule
-    )
-
     # Total fuel consumption variable for each year
     model.total_fuel_consumption = Var(model.years, within=NonNegativeReals)
 
@@ -335,6 +328,15 @@ def build_model_for_system(system_name, baseline_row, data):
         model.technologies, model.fuels, model.years, rule=fuel_max_share_constraint_rule
     )
 
+    # # May not need
+    #
+    # def fuel_consumption_limit_rule(m, f, yr):
+    #     return m.fuel_consumption[f, yr] <= m.fuel_select[f, yr] * m.fuel_eff_param[f, yr] * production
+    #
+    # model.fuel_consumption_limit_constraint = Constraint(
+    #     model.fuels, model.years, rule=fuel_consumption_limit_rule
+    # )
+    #
     # # Define the material min share constraint with Big-M reformulation
     # def fuel_min_share_constraint_rule(m, tech, f, yr):
     #     min_share = data['fuel_min_ratio'].get((tech, f), 0)
@@ -348,15 +350,15 @@ def build_model_for_system(system_name, baseline_row, data):
     # model.fuel_min_share_constraint = Constraint(
     #     model.technologies, model.fuels, model.years, rule=fuel_min_share_constraint_rule
     # )
-
-    def technology_fuel_link_rule(m, yr, tech):
-        compatible_fuels = data['technology_fuel_pairs'].get(tech, [])
-        # If a technology is active, at least one of its compatible fuels must be selected
-        return sum(m.fuel_select[f, yr] for f in compatible_fuels) >= m.active_technology[tech, yr]
-
-    model.technology_fuel_link_constraint = Constraint(
-        model.years, model.technologies, rule=technology_fuel_link_rule
-    )
+    #
+    # def technology_fuel_link_rule(m, yr, tech):
+    #     compatible_fuels = data['technology_fuel_pairs'].get(tech, [])
+    #     # If a technology is active, at least one of its compatible fuels must be selected
+    #     return sum(m.fuel_select[f, yr] for f in compatible_fuels) >= m.active_technology[tech, yr]
+    #
+    # model.technology_fuel_link_constraint = Constraint(
+    #     model.years, model.technologies, rule=technology_fuel_link_rule
+    # )
 
     """
     Constraints for Materials
@@ -373,29 +375,6 @@ def build_model_for_system(system_name, baseline_row, data):
     def material_selection_rule(m, yr):
         return sum(m.material_select[mat, yr] for mat in m.materials) >= 1
     model.material_selection_constraint = Constraint(model.years, rule=material_selection_rule)
-
-    # **Material Consumption Limit Constraint**
-    def material_consumption_limit_rule(m, mat, yr):
-        return (
-            m.material_consumption[mat, yr]
-            <= m.material_select[mat, yr] * m.material_eff_param[mat, yr] * production
-        )
-    model.material_consumption_limit_constraint = Constraint(
-        model.materials, model.years, rule=material_consumption_limit_rule
-    )
-
-    # **Technology-Material Link Constraint**
-    def technology_material_link_rule(m, yr, tech):
-        compatible_materials = data['technology_material_pairs'].get(tech, [])
-        # If a technology is active, at least one of its compatible materials must be selected
-        return sum(m.material_select[mat, yr] for mat in compatible_materials) >= m.active_technology[tech, yr]
-
-    model.technology_material_link_constraint = Constraint(
-        model.years, model.technologies, rule=technology_material_link_rule
-    )
-
-    # Total material consumption variable for each year
-    model.total_material_consumption = Var(model.years, within=NonNegativeReals)
 
     def total_material_consumption_rule(m, yr):
         return m.total_material_consumption[yr] == sum(
@@ -423,6 +402,7 @@ def build_model_for_system(system_name, baseline_row, data):
         model.technologies, model.materials, model.years, rule=material_max_share_constraint_rule
     )
 
+    # May not need
     # # Define the material min share constraint with Big-M reformulation
     # def material_min_share_constraint_rule(m, tech, mat, yr):
     #     min_share = data['material_min_ratio'].get((tech, mat), 0)
@@ -436,7 +416,29 @@ def build_model_for_system(system_name, baseline_row, data):
     # model.material_min_share_constraint = Constraint(
     #     model.technologies, model.materials, model.years, rule=material_min_share_constraint_rule
     # )
-
+    # # **Technology-Material Link Constraint**
+    # def technology_material_link_rule(m, yr, tech):
+    #     compatible_materials = data['technology_material_pairs'].get(tech, [])
+    #     # If a technology is active, at least one of its compatible materials must be selected
+    #     return sum(m.material_select[mat, yr] for mat in compatible_materials) >= m.active_technology[tech, yr]
+    #
+    # model.technology_material_link_constraint = Constraint(
+    #     model.years, model.technologies, rule=technology_material_link_rule
+    # )
+    #
+    # # **Material Consumption Limit Constraint**
+    # def material_consumption_limit_rule(m, mat, yr):
+    #     return (
+    #         m.material_consumption[mat, yr]
+    #         <= m.material_select[mat, yr] * m.material_eff_param[mat, yr] * production
+    #     )
+    # model.material_consumption_limit_constraint = Constraint(
+    #     model.materials, model.years, rule=material_consumption_limit_rule
+    # )
+    #
+    #
+    # # Total material consumption variable for each year
+    # model.total_material_consumption = Var(model.years, within=NonNegativeReals)
     """
     Objective Function
     """

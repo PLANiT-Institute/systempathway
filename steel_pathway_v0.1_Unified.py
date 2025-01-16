@@ -449,6 +449,10 @@ def build_unified_model(data):
 
     model.minimum_production_constraint = Constraint(model.systems, model.years, rule=minimum_production_rule)
 
+    """
+    Fuel Constraints
+    """
+
     # 4.5. Fuel Constraints
     def fuel_production_constraint_rule(m, sys, yr):
         return m.production[sys, yr] == sum(
@@ -477,18 +481,6 @@ def build_unified_model(data):
 
     M_fuel = max(model.production_param.values()) * max(model.fuel_eff_param.values())  # Adjust based on the problem scale
 
-
-    # 4. Fuel Consumption Limit
-    def fuel_consumption_limit_rule(m, sys, f, yr):
-        return m.fuel_consumption[sys, f, yr] <= M_fuel * m.fuel_select[sys, f, yr]
-
-    model.fuel_consumption_limit_constraint = Constraint(model.systems, model.fuels, model.years,
-                                                         rule=fuel_consumption_limit_rule)
-
-    model.fuel_consumption_limit_constraint = Constraint(
-        model.systems, model.fuels, model.years, rule=fuel_consumption_limit_rule
-    )
-
     # 5. Maximum Fuel Share Constraint
 
     def fuel_max_share_constraint_rule(m, sys, tech, f, yr):
@@ -501,6 +493,17 @@ def build_unified_model(data):
     model.fuel_max_share_constraint = Constraint(
         model.systems, model.technologies, model.fuels, model.years, rule=fuel_max_share_constraint_rule
     )
+
+    # # 4. Fuel Consumption Limit
+    # def fuel_consumption_limit_rule(m, sys, f, yr):
+    #     return m.fuel_consumption[sys, f, yr] <= M_fuel * m.fuel_select[sys, f, yr]
+    #
+    # model.fuel_consumption_limit_constraint = Constraint(model.systems, model.fuels, model.years,
+    #                                                      rule=fuel_consumption_limit_rule)
+    #
+    # model.fuel_consumption_limit_constraint = Constraint(
+    #     model.systems, model.fuels, model.years, rule=fuel_consumption_limit_rule
+    # )
 
     # # 6. Minimum Fuel Share Constraint
     # def fuel_min_share_constraint_rule(m, sys, tech, f, yr):
@@ -552,15 +555,6 @@ def build_unified_model(data):
         model.systems, model.years, rule=total_material_consumption_rule
     )
 
-    # 4. Material Consumption Limit
-    def material_consumption_limit_rule(m, sys, mat, yr):
-        # Material consumption is limited by material selection
-        return m.material_consumption[sys, mat, yr] <= M_mat * m.material_select[sys, mat, yr]
-
-    model.material_consumption_limit_constraint = Constraint(
-        model.systems, model.materials, model.years, rule=material_consumption_limit_rule
-    )
-
     # 5. Maximum Material Share Constraint
     def material_max_share_constraint_rule(m, sys, tech, mat, yr):
         # Get the maximum allowable share for the (technology, material) combination
@@ -573,6 +567,15 @@ def build_unified_model(data):
         model.systems, model.technologies, model.materials, model.years, rule=material_max_share_constraint_rule
     )
 
+
+    # # 4. Material Consumption Limit
+    # def material_consumption_limit_rule(m, sys, mat, yr):
+    #     # Material consumption is limited by material selection
+    #     return m.material_consumption[sys, mat, yr] <= M_mat * m.material_select[sys, mat, yr]
+    #
+    # model.material_consumption_limit_constraint = Constraint(
+    #     model.systems, model.materials, model.years, rule=material_consumption_limit_rule
+    # )
     # # 6. Minimum Material Share Constraint
     # def material_min_share_constraint_rule(m, sys, tech, mat, yr):
     #     # Get the minimum allowable share for the (technology, material) combination
