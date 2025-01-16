@@ -41,6 +41,15 @@ def load_data(file_path):
 pd.read_excel(file_path, sheet_name='technology_material_pairs').groupby('technology')['material'].apply(list).to_dict()
     data['technology_introduction'] = pd.read_excel(file_path, sheet_name='technology', index_col=0)[
         'introduction'].to_dict()
+    technology_fuel_pairs_df = pd.read_excel(file_path, sheet_name='technology_fuel_pairs')
+
+    data['fuel_max_ratio'] = technology_fuel_pairs_df.set_index(['technology', 'fuel'])['max'].to_dict()
+    data['fuel_min_ratio'] = technology_fuel_pairs_df.set_index(['technology', 'fuel'])['min'].to_dict()
+    technology_material_pairs_df = pd.read_excel(file_path, sheet_name='technology_material_pairs')
+
+    data['material_max_ratio'] = technology_material_pairs_df.set_index(['technology', 'material'])['max'].to_dict()
+    data['material_min_ratio'] = technology_material_pairs_df.set_index(['technology', 'material'])['min'].to_dict()
+
 
     return data
 
@@ -449,28 +458,60 @@ def build_unified_model(data):
     model.fuel_production_constraint = Constraint(model.systems, model.years, rule=fuel_production_constraint_rule)
 
     def fuel_selection_rule(m, sys, yr):
-        return sum(m.fuel_select[sys, fuel, yr] for fuel in m.fuels) == 1
+        return sum(m.fuel_select[sys, fuel, yr] for fuel in m.fuels) >= 1
 
     model.fuel_selection_constraint = Constraint(model.systems, model.years, rule=fuel_selection_rule)
 
-    # def fuel_technology_link_rule(m, sys, yr, f):
-    #     compatible_technologies = [
-    #         tech for tech in m.technologies if f in data['technology_fuel_pairs'].get(tech, [])
-    #     ]
-    #     return sum(
-    #         m.active_technology[sys, tech, yr] for tech in compatible_technologies
-    #     ) >= m.fuel_select[sys, f, yr]
-    #
-    # model.fuel_technology_link_constraint = Constraint(model.systems, model.years, model.fuels,
-    #                                                    rule=fuel_technology_link_rule)
+    # 1. Total Fuel Consumption for Each System
+    model.total_fuel_consumption = Var(model.systems, model.years, within=NonNegativeReals)
 
-    # def technology_fuel_link_rule(m, sys, yr, tech):
-    #     compatible_fuels = data['technology_fuel_pairs'].get(tech, [])
-    #     # If a technology is active, at least one of its compatible fuels must be selected
-    #     return sum(m.fuel_select[f, yr] for f in compatible_fuels) >= m.active_technology[sys, tech, yr]
+    def total_fuel_consumption_rule(m, sys, yr):
+        # Total fuel consumption per system for each year
+        return m.total_fuel_consumption[sys, yr] == sum(
+            m.fuel_consumption[sys, fuel, yr] for fuel in m.fuels
+        )
+
+    model.total_fuel_consumption_constraint = Constraint(
+        model.systems, model.years, rule=total_fuel_consumption_rule
+    )
+
+    M_fuel = max(model.production_param.values()) * max(model.fuel_eff_param.values())  # Adjust based on the problem scale
+
+
+    # 4. Fuel Consumption Limit
+    def fuel_consumption_limit_rule(m, sys, f, yr):
+        return m.fuel_consumption[sys, f, yr] <= M_fuel * m.fuel_select[sys, f, yr]
+
+    model.fuel_consumption_limit_constraint = Constraint(model.systems, model.fuels, model.years,
+                                                         rule=fuel_consumption_limit_rule)
+
+    model.fuel_consumption_limit_constraint = Constraint(
+        model.systems, model.fuels, model.years, rule=fuel_consumption_limit_rule
+    )
+
+    # 5. Maximum Fuel Share Constraint
+
+    def fuel_max_share_constraint_rule(m, sys, tech, f, yr):
+        # Get the maximum allowable share for the (technology, fuel) combination
+        max_share = data['fuel_max_ratio'].get((tech, f), 0)
+        return m.fuel_consumption[sys, f, yr] <= (
+                max_share * m.total_fuel_consumption[sys, yr] + M_fuel * (1 - m.active_technology[sys, tech, yr])
+        )
+
+    model.fuel_max_share_constraint = Constraint(
+        model.systems, model.technologies, model.fuels, model.years, rule=fuel_max_share_constraint_rule
+    )
+
+    # # 6. Minimum Fuel Share Constraint
+    # def fuel_min_share_constraint_rule(m, sys, tech, f, yr):
+    #     # Get the minimum allowable share for the (technology, fuel) combination
+    #     min_share = data['fuel_min_ratio'].get((tech, f), 0)
+    #     return m.fuel_consumption[sys, f, yr] >= (
+    #             min_share * m.total_fuel_consumption[sys, yr] - M_fuel * (1 - m.active_technology[sys, tech, yr])
+    #     )
     #
-    # model.technology_fuel_link_constraint = Constraint(
-    #     model.years, model.technologies, rule=technology_fuel_link_rule
+    # model.fuel_min_share_constraint = Constraint(
+    #     model.systems, model.technologies, model.fuels, model.years, rule=fuel_min_share_constraint_rule
     # )
 
     # 4.6. Material Constraints
@@ -481,6 +522,9 @@ def build_unified_model(data):
 
     # 4.6. Material Constraints
 
+    M_mat = max(model.production_param.values()) * max(model.material_eff_param.values())  # Adjust based on the problem scale
+
+
     # 4.6.0. Material Production Constraint
     def material_production_constraint_rule(m, sys, yr):
         return m.production[sys, yr] == sum(
@@ -490,36 +534,60 @@ def build_unified_model(data):
     model.material_production_constraint = Constraint(model.systems, model.years,
                                                       rule=material_production_constraint_rule)
 
-    # 4.5. Fuel Constraints
-    def material_production_constraint_rule(m, sys, yr):
-        return m.production[sys, yr] == sum(
-            m.material_consumption[sys, mat, yr] / m.material_eff_param[mat, yr] for mat in m.materials
-        )
-
-    model.material_production_constraint = Constraint(model.systems, model.years, rule=material_production_constraint_rule)
-
     def material_selection_rule(m, sys, yr):
-        return sum(m.material_select[sys, mat, yr] for mat in m.materials) == 1
+        return sum(m.material_select[sys, mat, yr] for mat in m.materials) >= 1
 
     model.material_selection_constraint = Constraint(model.systems, model.years, rule=material_selection_rule)
 
-    # Material-Technology Link Constraint
-    def material_technology_link_rule(m, sys, yr, mat):
-        compatible_technologies = [
-            tech for tech in m.technologies if mat in data['technology_material_pairs'].get(tech, [])
-        ]
-        return sum(
-            m.active_technology[sys, tech, yr] for tech in compatible_technologies
-        ) >= m.material_select[sys, mat, yr]
+    # 1. Total Material Consumption for Each System
+    model.total_material_consumption = Var(model.systems, model.years, within=NonNegativeReals)
 
-    model.material_technology_link_constraint = Constraint(
-        model.systems, model.years, model.materials, rule=material_technology_link_rule
+    def total_material_consumption_rule(m, sys, yr):
+        # Total material consumption per system for each year
+        return m.total_material_consumption[sys, yr] == sum(
+            m.material_consumption[sys, mat, yr] for mat in m.materials
+        )
+
+    model.total_material_consumption_constraint = Constraint(
+        model.systems, model.years, rule=total_material_consumption_rule
     )
+
+    # 4. Material Consumption Limit
+    def material_consumption_limit_rule(m, sys, mat, yr):
+        # Material consumption is limited by material selection
+        return m.material_consumption[sys, mat, yr] <= M_mat * m.material_select[sys, mat, yr]
+
+    model.material_consumption_limit_constraint = Constraint(
+        model.systems, model.materials, model.years, rule=material_consumption_limit_rule
+    )
+
+    # 5. Maximum Material Share Constraint
+    def material_max_share_constraint_rule(m, sys, tech, mat, yr):
+        # Get the maximum allowable share for the (technology, material) combination
+        max_share = data['material_max_ratio'].get((tech, mat), 0)
+        return m.material_consumption[sys, mat, yr] <= (
+                max_share * m.total_material_consumption[sys, yr] + M_mat * (1 - m.active_technology[sys, tech, yr])
+        )
+
+    model.material_max_share_constraint = Constraint(
+        model.systems, model.technologies, model.materials, model.years, rule=material_max_share_constraint_rule
+    )
+
+    # # 6. Minimum Material Share Constraint
+    # def material_min_share_constraint_rule(m, sys, tech, mat, yr):
+    #     # Get the minimum allowable share for the (technology, material) combination
+    #     min_share = data['material_min_ratio'].get((tech, mat), 0)
+    #     return m.material_consumption[sys, mat, yr] >= (
+    #             min_share * m.total_material_consumption[sys, yr] - M_mat * (1 - m.active_technology[sys, tech, yr])
+    #     )
+    #
+    # model.material_min_share_constraint = Constraint(
+    #     model.systems, model.technologies, model.materials, model.years, rule=material_min_share_constraint_rule
+    # )
 
     # 4.7. Linearization of Auxiliary Product Terms (prod_active, replace_prod_active, renew_prod_active)
     # Since active_technology, replace, renew are binary and production is continuous, linearize with Big-M
 
-    M_fuel = max(model.production_param.values()) * max(model.fuel_eff_param.values())
 
     # 4.7.1. prod_active = production * active_technology
     def prod_active_limit_rule(m, sys, tech, yr):
@@ -935,12 +1003,7 @@ def main():
 
         # Display Technology Statuses
         print("\n=== Technology Statuses ===")
-        # for status in technology_statuses:
-        #     if status['Active']+ status['Continue']+status['Replace']+status['Renew'] >= 1:
-        #         print(f"Year {status['Year']}: Technology {status['Technology']} - "
-        #               f"Continue: {status['Continue']}, Replace: {status['Replace']}, "
-        #               f"Renew: {status['Renew']}, Active: {status['Active']}")
-        # Convert to DataFrame
+
         technology_df = pd.DataFrame(technology_statuses)
 
         # Filter rows where at least one status indicator is 1
