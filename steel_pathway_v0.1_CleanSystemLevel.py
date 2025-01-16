@@ -116,7 +116,7 @@ def build_model_for_system(system_name, baseline_row, data):
     # **Variables**
     model.material_consumption = Var(model.materials, model.years, domain=NonNegativeReals)
     model.emission_by_tech = Var(model.technologies, model.years, domain=NonNegativeReals)
-
+    model.total_material_consumption = Var(model.years, within=NonNegativeReals)
     # Parameters for maximum fuel and material ratios
     # Initialize fuel max ratio parameter
     model.fuel_max_ratio = Param(
@@ -438,7 +438,7 @@ def build_model_for_system(system_name, baseline_row, data):
     #
     #
     # # Total material consumption variable for each year
-    # model.total_material_consumption = Var(model.years, within=NonNegativeReals)
+
     """
     Objective Function
     """
