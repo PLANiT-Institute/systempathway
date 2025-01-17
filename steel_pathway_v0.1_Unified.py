@@ -33,6 +33,7 @@ def load_data(file_path):
     data['opex'] = pd.read_excel(file_path, sheet_name='opex', index_col=0)
     data['renewal'] = pd.read_excel(file_path, sheet_name='renewal', index_col=0)
     data['emission'] = pd.read_excel(file_path, sheet_name='emission', index_col=0)
+    data['carbonprice'] = pd.read_excel(file_path, sheet_name='carbonprice', index_col=0)
 
     # Load technology emission intensities and pairings
     data['technology_ei'] = pd.read_excel(file_path, sheet_name='technology_ei', index_col=0)
@@ -169,10 +170,16 @@ def export_results_to_excel(model, global_capex, global_renewal_cost, global_ope
         summary_df.to_excel(writer, sheet_name='Global_Summary')
 
 
-def build_unified_model(data):
+def build_unified_model(data, **kwargs):
+    """
+    Get kwargs
+    """
+    carbonprice_include = kwargs.get('carbonprice_include', True)
+
     """
     Build the unified Pyomo model.
     """
+
 
     model = ConcreteModel()
 
@@ -188,6 +195,12 @@ def build_unified_model(data):
     # --------------------------
     # 2. Define Parameters
     # --------------------------
+
+    model.carbonprice_param = Param(model.years,
+                                    initialize=lambda m, yr: data['carbonprice'].loc['global', yr],
+                                    default=0.0)
+
+
     # CAPEX, OPEX, Renewal
     model.capex_param = Param(model.technologies, model.years,
                               initialize=lambda m, tech, yr: data['capex'].loc[tech, yr],
@@ -310,7 +323,8 @@ def build_unified_model(data):
             m.emission_by_tech[sys, tech, yr] for sys in m.systems for tech in m.technologies) <= \
             m.emission_limit[yr]
 
-    model.emission_limit_constraint = Constraint(model.years, rule=emission_limit_rule)
+    if carbonprice_include == False:
+        model.emission_limit_constraint = Constraint(model.years, rule=emission_limit_rule)
 
     def technology_activation_rule(m, sys, yr):
         return sum(m.active_technology[sys, tech, yr] for tech in m.technologies) == 1
@@ -516,8 +530,11 @@ def build_unified_model(data):
         model.systems, model.technologies, model.fuels, model.years, rule=fuel_min_share_constraint_rule
     )
 
-    # 4.6. Material Constraints
+    """
+    Material Constraints
+    """
 
+    # 4.6. Material Constraints
     M_mat = max(model.production_param.values()) * max(model.material_eff_param.values())  # Adjust based on the problem scale
 
     # 4.6.0. Material Production Constraint
@@ -663,19 +680,36 @@ def build_unified_model(data):
     # 5. Define Objective Function
     # --------------------------
     def total_cost_rule(m):
-        return sum(
+        """
+        Calculate the total cost, optionally including the carbon cost.
+        """
+        # Base cost components
+        total_cost = sum(
             sum(
-                # Use auxiliary variables for linearity
+                # CAPEX, Renewal, and OPEX costs using auxiliary variables for linearity
                 (m.capex_param[tech, yr] * m.replace_prod_active[sys, tech, yr] +
                  m.renewal_param[tech, yr] * m.renew_prod_active[sys, tech, yr] +
                  m.opex_param[tech, yr] * m.prod_active[sys, tech, yr])
                 for tech in m.technologies
             ) +
-            # Linear fuel and material costs
+            # Fuel costs
             sum(m.fuel_cost_param[fuel, yr] * m.fuel_consumption[sys, fuel, yr] for fuel in m.fuels) +
+            # Material costs
             sum(m.material_cost_param[mat, yr] * m.material_consumption[sys, mat, yr] for mat in m.materials)
             for sys in m.systems for yr in m.years
         )
+
+        # Add carbon price cost if the flag is enabled
+        if carbonprice_include:
+            carbon_cost = sum(
+                m.carbonprice_param[yr] * sum(
+                    m.emission_by_tech[sys, tech, yr] for tech in m.technologies
+                )
+                for sys in m.systems for yr in m.years
+            )
+            total_cost += carbon_cost
+
+        return total_cost
 
     model.total_cost = Objective(rule=total_cost_rule, sense=minimize)
 

@@ -31,6 +31,7 @@ def load_data(file_path):
     data['capex'] = pd.read_excel(file_path, sheet_name='capex', index_col=0)
     data['opex'] = pd.read_excel(file_path, sheet_name='opex', index_col=0)
     data['renewal'] = pd.read_excel(file_path, sheet_name='renewal', index_col=0)
+    data['carbonprice'] = pd.read_excel(file_path, sheet_name='carbonprice', index_col=0)
 
     # # Import and group Technology-Fuel Pairs
     # data['technology_fuel_pairs'] = pd.read_excel(file_path, sheet_name='technology_fuel_pairs') \
@@ -59,12 +60,15 @@ def load_data(file_path):
     return data
 
 
-def build_model_for_system(system_name, baseline_row, data):
+def build_model_for_system(system_name, baseline_row, data, **kwargs):
     """
     Build a Pyomo optimization model for a single furnace site (system),
     ensuring that the initial year maintains the baseline technology
     and is excluded from the optimization years.
     """
+
+    carbonprice_include = kwargs.get('carbonprice_include', True)
+
     model = ConcreteModel()
 
     # Define sets from the loaded data
@@ -92,6 +96,7 @@ def build_model_for_system(system_name, baseline_row, data):
     model.fuel_eff_param = Param(model.fuels, model.years,initialize=lambda m, f, yr: data['fuel_efficiency'].loc[f, yr], default=0.0)
     model.material_cost_param = Param(model.materials, model.years,initialize=lambda m, mat, yr: data['material_cost'].loc[mat, yr], default=0.0)
     model.material_eff_param = Param(model.materials, model.years,initialize=lambda m, mat, yr: data['material_efficiency'].loc[mat, yr],default=0.0)
+    model.carbonprice_param = Param(model.years, initialize=lambda m, yr: data['carbonprice'].loc['global', yr], default=0.0)
 
     # Decision Variables
     model.fuel_select = Var(model.fuels, model.years, domain=Binary)
@@ -152,7 +157,9 @@ def build_model_for_system(system_name, baseline_row, data):
             m.emission_by_tech[tech, yr] for tech in m.technologies
         ) <= m.emission_limit[yr]
 
-    model.total_emission_limit_constraint = Constraint(model.years, rule=total_emission_limit_rule)
+    if carbonprice_include == False:
+        model.total_emission_limit_constraint = Constraint(model.years, rule=total_emission_limit_rule)
+
 
     """
     First year rule
@@ -444,7 +451,7 @@ def build_model_for_system(system_name, baseline_row, data):
     """
 
     def total_cost_rule(m):
-        return sum(
+        total_cost = sum(
             sum(
                 # CAPEX: Only applied if the technology is replaced
                 (m.capex_param[tech, yr] * m.replace[tech, yr] * production +
@@ -465,6 +472,16 @@ def build_model_for_system(system_name, baseline_row, data):
             for yr in m.years
         )
 
+        # Add carbon price if the flag is enabled
+        if carbonprice_include:
+            carbon_cost = sum(
+                m.carbonprice_param[yr] * sum(m.emission_by_tech[tech, yr] for tech in m.technologies)
+                for yr in m.years
+            )
+            total_cost += carbon_cost
+
+        return total_cost
+
     model.total_cost = Objective(rule=total_cost_rule, sense=minimize)
 
     return model
@@ -481,7 +498,7 @@ for system_name in data['baseline'].index:
     baseline_row = data['baseline'].loc[system_name]
 
     # Build and solve the model
-    model = build_model_for_system(system_name, baseline_row, data)
+    model = build_model_for_system(system_name, baseline_row, data, carbonprice_include=True)
     result = solver.solve(model, tee=True)
 
     if result.solver.status == 'ok' and result.solver.termination_condition == 'optimal':
