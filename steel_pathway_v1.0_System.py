@@ -486,129 +486,135 @@ def build_model_for_system(system_name, baseline_row, data, **kwargs):
 
     return model
 
+def main(**kwargs):
 
-# Load data
-file_path = 'database/steel_data.xlsx'
-data = load_data(file_path)
-solver = SolverFactory('glpk')
-results_dict = {}
-for system_name in data['baseline'].index:
-    print(f"\n=== Solving for furnace site: {system_name} ===")
+    carbonprice_include = kwargs.get('carboprice_include', False)
 
-    baseline_row = data['baseline'].loc[system_name]
+    # Load data
+    file_path = 'database/steel_data.xlsx'
+    data = load_data(file_path)
+    solver = SolverFactory('glpk')
+    results_dict = {}
 
-    # Build and solve the model
-    model = build_model_for_system(system_name, baseline_row, data, carbonprice_include=True)
-    result = solver.solve(model, tee=True)
+    for system_name in data['baseline'].index:
+        print(f"\n=== Solving for furnace site: {system_name} ===")
 
-    if result.solver.status == 'ok' and result.solver.termination_condition == 'optimal':
-        print(f"\n=== Results for {system_name} ===")
-        production_value = baseline_row['production']
+        baseline_row = data['baseline'].loc[system_name]
 
-        yearly_metrics = []
-        fuel_consumption_table = []
-        material_consumption_table = []
+        # Build and solve the model
+        model = build_model_for_system(system_name, baseline_row, data, carbonprice_include=carbonprice_include)
+        result = solver.solve(model, tee=True)
 
-        for yr in model.years:
-            # Calculate costs
-            capex_cost = sum(
-                model.capex_param[tech, yr] * model.replace[tech, yr].value * production_value
-                for tech in model.technologies
-            )
+        if result.solver.status == 'ok' and result.solver.termination_condition == 'optimal':
+            print(f"\n=== Results for {system_name} ===")
+            production_value = baseline_row['production']
 
-            # Adjust CAPEX for the first year and baseline technology
-            if yr == min(model.years):
-                capex_cost += model.capex_param[baseline_row['technology'], yr] * (
-                    model.lifespan_param[baseline_row['technology']] - (yr - baseline_row['introduced_year'])
-                ) / model.lifespan_param[baseline_row['technology']] * production_value
+            yearly_metrics = []
+            fuel_consumption_table = []
+            material_consumption_table = []
 
-            renewal_cost = sum(
-                model.renewal_param[tech, yr] * model.renew[tech, yr].value * production_value
-                for tech in model.technologies
-            )
-            opex_cost = sum(
-                model.opex_param[tech, yr] * model.active_technology[tech, yr].value * production_value
-                for tech in model.technologies
-            )
+            for yr in model.years:
+                # Calculate costs
+                capex_cost = sum(
+                    model.capex_param[tech, yr] * model.replace[tech, yr].value * production_value
+                    for tech in model.technologies
+                )
 
-            # Calculate emissions
-            total_emissions = sum(
-                model.emission_by_tech[tech, yr].value for tech in model.technologies
-            )
+                # Adjust CAPEX for the first year and baseline technology
+                if yr == min(model.years):
+                    capex_cost += model.capex_param[baseline_row['technology'], yr] * (
+                        model.lifespan_param[baseline_row['technology']] - (yr - baseline_row['introduced_year'])
+                    ) / model.lifespan_param[baseline_row['technology']] * production_value
 
-            # Calculate fuel consumption
-            fuel_consumption = {
-                fuel: model.fuel_consumption[fuel, yr].value for fuel in model.fuels
-            }
+                renewal_cost = sum(
+                    model.renewal_param[tech, yr] * model.renew[tech, yr].value * production_value
+                    for tech in model.technologies
+                )
+                opex_cost = sum(
+                    model.opex_param[tech, yr] * model.active_technology[tech, yr].value * production_value
+                    for tech in model.technologies
+                )
 
-            # Calculate material consumption
-            material_consumption = {
-                mat: model.material_consumption[mat, yr].value for mat in model.materials
-            }
+                # Calculate emissions
+                total_emissions = sum(
+                    model.emission_by_tech[tech, yr].value for tech in model.technologies
+                )
 
-            # Add yearly data
-            yearly_metrics.append({
-                "Year": yr,
-                "CAPEX": capex_cost,
-                "Renewal Cost": renewal_cost,
-                "OPEX": opex_cost,
-                "Total Emissions": total_emissions
-            })
+                # Calculate fuel consumption
+                fuel_consumption = {
+                    fuel: model.fuel_consumption[fuel, yr].value for fuel in model.fuels
+                }
 
-            # Add to fuel and material consumption tables
-            fuel_consumption_table.append({"Year": yr, **fuel_consumption})
-            material_consumption_table.append({"Year": yr, **material_consumption})
+                # Calculate material consumption
+                material_consumption = {
+                    mat: model.material_consumption[mat, yr].value for mat in model.materials
+                }
 
-        # Convert costs to DataFrame
-        costs_df = pd.DataFrame(yearly_metrics).set_index("Year")
-        print("\n=== Costs and Emissions by Year ===")
-        print(costs_df)
-
-        # Convert fuel and material consumption to DataFrames
-        fuel_df = pd.DataFrame(fuel_consumption_table).set_index("Year")
-        material_df = pd.DataFrame(material_consumption_table).set_index("Year")
-
-        print("\n=== Fuel Consumption by Year ===")
-        print(fuel_df)
-
-        print("\n=== Material Consumption by Year ===")
-        print(material_df)
-
-        # Extract technology statuses
-        technology_statuses = []
-        for yr in model.years:
-            for tech in model.technologies:
-                technology_statuses.append({
+                # Add yearly data
+                yearly_metrics.append({
                     "Year": yr,
-                    "Technology": tech,
-                    "Continue": model.continue_technology[tech, yr].value,
-                    "Replace": model.replace[tech, yr].value,
-                    "Renew": model.renew[tech, yr].value,
-                    "Active": model.active_technology[tech, yr].value
+                    "CAPEX": capex_cost,
+                    "Renewal Cost": renewal_cost,
+                    "OPEX": opex_cost,
+                    "Total Emissions": total_emissions
                 })
 
-        technology_df = pd.DataFrame(technology_statuses)
+                # Add to fuel and material consumption tables
+                fuel_consumption_table.append({"Year": yr, **fuel_consumption})
+                material_consumption_table.append({"Year": yr, **material_consumption})
 
-        # Filter rows where at least one status indicator is 1
-        technology_df_filtered = technology_df[
-            technology_df[['Active', 'Continue', 'Replace', 'Renew']].sum(axis=1) >= 1
-            ]
+            # Convert costs to DataFrame
+            costs_df = pd.DataFrame(yearly_metrics).set_index("Year")
+            print("\n=== Costs and Emissions by Year ===")
+            print(costs_df)
 
-        # Set MultiIndex if 'System' is available
-        if 'System' in technology_df_filtered.columns:
-            technology_df_filtered.set_index(['System', 'Year', 'Technology'], inplace=True)
+            # Convert fuel and material consumption to DataFrames
+            fuel_df = pd.DataFrame(fuel_consumption_table).set_index("Year")
+            material_df = pd.DataFrame(material_consumption_table).set_index("Year")
+
+            print("\n=== Fuel Consumption by Year ===")
+            print(fuel_df)
+
+            print("\n=== Material Consumption by Year ===")
+            print(material_df)
+
+            # Extract technology statuses
+            technology_statuses = []
+            for yr in model.years:
+                for tech in model.technologies:
+                    technology_statuses.append({
+                        "Year": yr,
+                        "Technology": tech,
+                        "Continue": model.continue_technology[tech, yr].value,
+                        "Replace": model.replace[tech, yr].value,
+                        "Renew": model.renew[tech, yr].value,
+                        "Active": model.active_technology[tech, yr].value
+                    })
+
+            technology_df = pd.DataFrame(technology_statuses)
+
+            # Filter rows where at least one status indicator is 1
+            technology_df_filtered = technology_df[
+                technology_df[['Active', 'Continue', 'Replace', 'Renew']].sum(axis=1) >= 1
+                ]
+
+            # Set MultiIndex if 'System' is available
+            if 'System' in technology_df_filtered.columns:
+                technology_df_filtered.set_index(['System', 'Year', 'Technology'], inplace=True)
+            else:
+                technology_df_filtered.set_index(['Year', 'Technology'], inplace=True)
+
+            # Rearrange columns
+            desired_columns = ['Continue', 'Replace', 'Renew', 'Active']
+            technology_df_filtered = technology_df_filtered[desired_columns]
+
+            # Display the DataFrame
+            print("\n=== Technology Statuses ===\n")
+            print(technology_df_filtered)
+
         else:
-            technology_df_filtered.set_index(['Year', 'Technology'], inplace=True)
+            print(
+                f"Solver failed for {system_name}. Status: {result.solver.status}, Condition: {result.solver.termination_condition}")
 
-        # Rearrange columns
-        desired_columns = ['Continue', 'Replace', 'Renew', 'Active']
-        technology_df_filtered = technology_df_filtered[desired_columns]
-
-        # Display the DataFrame
-        print("\n=== Technology Statuses ===\n")
-        print(technology_df_filtered)
-
-    else:
-        print(
-            f"Solver failed for {system_name}. Status: {result.solver.status}, Condition: {result.solver.termination_condition}")
-
+if __name__ == "__main__":
+    main(carboprice_include=True)
