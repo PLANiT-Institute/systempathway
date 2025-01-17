@@ -54,122 +54,6 @@ pd.read_excel(file_path, sheet_name='technology_material_pairs').groupby('techno
 
     return data
 
-def export_results_to_excel(model, global_capex, global_renewal_cost, global_opex, global_total_emissions):
-    """
-    Export detailed results to an Excel file with separate sheets for each furnace site
-    and a summary sheet for global metrics.
-    """
-    with pd.ExcelWriter('model_results.xlsx') as writer:
-        # Iterate over each system to create separate sheets
-        for sys in model.systems:
-            # Initialize lists to store yearly data
-            yearly_metrics = []
-            fuel_consumption_table = []
-            material_consumption_table = []
-            technology_statuses = []
-
-            # Extract baseline technology information
-            baseline_tech = data['baseline'].loc[sys, 'technology']
-            introduced_year = data['baseline'].loc[sys, 'introduced_year']
-            lifespan = model.lifespan_param[baseline_tech]
-
-            for yr in model.years:
-                # Calculate Costs
-                # CAPEX: Only applied if the technology is replaced
-                capex_cost = sum(
-                    model.capex_param[tech, yr] * value(model.replace_prod_active[sys, tech, yr])
-                    for tech in model.technologies
-                )
-
-                # Adjust CAPEX for the first year and baseline technology
-                if yr == min(model.years):
-                    if baseline_tech in model.technologies:
-                        capex_adjustment = model.capex_param[baseline_tech, yr] * (
-                            (lifespan - (yr - introduced_year)) / lifespan
-                        ) * value(model.production[sys, yr])
-                        capex_cost += capex_adjustment
-                    else:
-                        print(f"Warning: Baseline technology '{baseline_tech}' not found in model.technologies for system '{sys}'.")
-
-                # Renewal Cost: Only applied if the technology is renewed
-                renewal_cost = sum(
-                    model.renewal_param[tech, yr] * value(model.renew_prod_active[sys, tech, yr])
-                    for tech in model.technologies
-                )
-
-                # OPEX: Always applied for active technologies
-                opex_cost = sum(
-                    model.opex_param[tech, yr] * value(model.prod_active[sys, tech, yr])
-                    for tech in model.technologies
-                )
-
-                # Calculate Emissions
-                total_emissions = sum(
-                    value(model.emission_by_tech[sys, tech, yr]) for tech in model.technologies
-                )
-
-                # Calculate Fuel Consumption
-                fuel_consumption = {
-                    fuel: value(model.fuel_consumption[sys, fuel, yr]) for fuel in model.fuels
-                }
-
-                # Calculate Material Consumption
-                material_consumption = {
-                    mat: value(model.material_consumption[sys, mat, yr]) for mat in model.materials
-                }
-
-                # Collect Yearly Metrics
-                yearly_metrics.append({
-                    "Year": yr,
-                    "CAPEX": capex_cost,
-                    "Renewal Cost": renewal_cost,
-                    "OPEX": opex_cost,
-                    "Total Emissions": total_emissions
-                })
-
-                # Collect Fuel Consumption Data
-                fuel_consumption_table.append({"Year": yr, **fuel_consumption})
-
-                # Collect Material Consumption Data
-                material_consumption_table.append({"Year": yr, **material_consumption})
-
-                # Collect Technology Statuses
-                for tech in model.technologies:
-                    technology_statuses.append({
-                        "Year": yr,
-                        "Technology": tech,
-                        "Continue": value(model.continue_technology[sys, tech, yr]),
-                        "Replace": value(model.replace[sys, tech, yr]),
-                        "Renew": value(model.renew[sys, tech, yr]),
-                        "Active": value(model.active_technology[sys, tech, yr])
-                    })
-
-            # Convert Yearly Metrics to DataFrame
-            costs_df = pd.DataFrame(yearly_metrics).set_index("Year")
-            costs_df.to_excel(writer, sheet_name=f'{sys}_Costs_and_Emissions')
-
-            # Convert Fuel Consumption to DataFrame
-            fuel_df = pd.DataFrame(fuel_consumption_table).set_index("Year")
-            fuel_df.to_excel(writer, sheet_name=f'{sys}_Fuel_Consumption')
-
-            # Convert Material Consumption to DataFrame
-            material_df = pd.DataFrame(material_consumption_table).set_index("Year")
-            material_df.to_excel(writer, sheet_name=f'{sys}_Material_Consumption')
-
-            # Convert Technology Statuses to DataFrame
-            technology_df = pd.DataFrame(technology_statuses)
-            technology_df.to_excel(writer, sheet_name=f'{sys}_Technology_Statuses', index=False)
-
-        # Create a summary sheet for global metrics
-        summary_data = {
-            "Metric": ["Total CAPEX", "Total Renewal Cost", "Total OPEX", "Total Cost", "Total Emissions"],
-            "Value": [global_capex, global_renewal_cost, global_opex,
-                      global_capex + global_renewal_cost + global_opex, global_total_emissions]
-        }
-        summary_df = pd.DataFrame(summary_data).set_index("Metric")
-        summary_df.to_excel(writer, sheet_name='Global_Summary')
-
-
 def build_unified_model(data, **kwargs):
     """
     Get kwargs
@@ -716,7 +600,6 @@ def build_unified_model(data, **kwargs):
 
     return model
 
-
 def display_selected_technologies(model):
     print("\n=== Selected Technologies per System per Year ===\n")
     for sys in model.systems:
@@ -874,10 +757,10 @@ def export_results_to_excel(model, annual_global_capex, annual_global_renewal_co
 from pyomo.environ import SolverFactory, value
 import pandas as pd
 
-from pyomo.environ import SolverFactory, value
-import pandas as pd
+def main(**kwargs):
 
-def main():
+    carbonprice_include = kwargs.get('carboprice_include', False)
+
     # --------------------------
     # 7. Load Data
     # --------------------------
@@ -887,7 +770,7 @@ def main():
     # --------------------------
     # 8. Build the Unified Model
     # --------------------------
-    model = build_unified_model(data)
+    model = build_unified_model(data, carbonprice_include=carbonprice_include)
 
     # --------------------------
     # 9. Solve the Model
@@ -1079,4 +962,4 @@ def main():
     # print("\n=== Results have been exported to 'model_results.xlsx' ===\n")
 
 if __name__ == "__main__":
-    main()
+    main(carboprice_include=True)
