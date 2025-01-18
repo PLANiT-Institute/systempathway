@@ -1,10 +1,9 @@
-import pandas as pd
 from pyomo.environ import (
     ConcreteModel, Var, NonNegativeReals, Binary, Param,
-    Objective, Constraint, SolverFactory, Set, minimize, value as pyomo_value
+    Objective, Constraint, SolverFactory, Set, minimize, value
 )
 from pyomo.util.infeasible import log_infeasible_constraints
-
+import pandas as pd
 
 def load_data(file_path):
     """
@@ -792,8 +791,7 @@ def export_results_to_excel(model, annual_global_capex, annual_global_renewal_co
         annual_summary_df = pd.DataFrame(annual_summary).set_index("Year")
         annual_summary_df.to_excel(writer, sheet_name='Annual_Global_Summary')
 
-from pyomo.environ import SolverFactory, value
-import pandas as pd
+
 
 def main(**kwargs):
 
