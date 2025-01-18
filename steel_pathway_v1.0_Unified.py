@@ -59,6 +59,8 @@ def build_unified_model(data, **kwargs):
     Get kwargs
     """
     carbonprice_include = kwargs.get('carbonprice_include', True)
+    max_renew = kwargs.get('max_renew', 10)
+    allow_replace_same_technology = kwargs.get('allow_replace_same_technology', False)
 
     """
     Build the unified Pyomo model.
@@ -157,6 +159,8 @@ def build_unified_model(data, **kwargs):
         within=model.fuels
     )
 
+
+
     # --------------------------
     # 3. Define Decision Variables
     # --------------------------
@@ -185,6 +189,10 @@ def build_unified_model(data, **kwargs):
         domain=Binary,
         initialize=0
     )
+
+    model.renew = Var(model.systems, model.technologies, model.years, domain=Binary)
+    model.max_renew = Param(initialize=max_renew)  # Example value; set as needed
+
 
     # --------------------------
     # 4. Define Constraints
@@ -263,6 +271,36 @@ def build_unified_model(data, **kwargs):
     model.hard_baseline_fuel_constraint = Constraint(
         model.systems, model.fuels, model.years, rule=hard_baseline_fuel_rule
     )
+
+    # **Additional Constraint: Prevent Replacing a Technology with Itself**
+
+    if not allow_replace_same_technology:
+        # Define a sorted list of years and create a mapping to previous years
+        sorted_years = sorted(model.years)
+        prev_year = {}
+        for i in range(1, len(sorted_years)):
+            prev_year[sorted_years[i]] = sorted_years[i - 1]
+
+        # Constraint: If replace[sys, tech, yr] == 1, then active_technology[sys, tech, yr-1] == 0
+        # This ensures that a technology cannot be replaced by itself
+        def no_replace_with_self_rule(m, sys, tech, yr):
+            if yr in prev_year:
+                return m.replace[sys, tech, yr] + m.active_technology[sys, tech, prev_year[yr]] <= 1
+            return Constraint.Skip
+
+        model.no_replace_with_self_constraint = Constraint(
+            model.systems,
+            model.technologies,
+            model.years,
+            rule=no_replace_with_self_rule
+        )
+
+    def renew_limit_rule(m, sys, tech):
+        return sum(m.renew[sys, tech, yr] for yr in m.years) <= m.max_renew
+
+    model.renew_limit_constraint = Constraint(model.systems,
+                                              model.technologies, rule=renew_limit_rule)
+
 
     # 4.3. Renewal Constraints
     def define_activation_change_rule(m, sys, tech, yr):
@@ -760,7 +798,9 @@ import pandas as pd
 def main(**kwargs):
 
     carbonprice_include = kwargs.get('carboprice_include', False)
-
+    max_renew = kwargs.get('max_renew', 10)
+    allow_replace_same_technology = kwargs.get('allow_replace_same_technology', False
+                                               )
     # --------------------------
     # 7. Load Data
     # --------------------------
@@ -770,7 +810,11 @@ def main(**kwargs):
     # --------------------------
     # 8. Build the Unified Model
     # --------------------------
-    model = build_unified_model(data, carbonprice_include=carbonprice_include)
+    model = build_unified_model(data,
+                                carbonprice_include=carbonprice_include,
+                                max_renew=max_renew,
+                                allow_replace_same_technology=allow_replace_same_technology)
+
 
     # --------------------------
     # 9. Solve the Model
@@ -962,4 +1006,6 @@ def main(**kwargs):
     # print("\n=== Results have been exported to 'model_results.xlsx' ===\n")
 
 if __name__ == "__main__":
-    main(carboprice_include=False)
+    main(carboprice_include=True,
+         max_renew = 2,
+         allow_replace_same_technology = False)

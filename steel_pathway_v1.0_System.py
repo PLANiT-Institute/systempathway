@@ -68,8 +68,13 @@ def build_model_for_system(system_name, baseline_row, data, **kwargs):
     """
 
     carbonprice_include = kwargs.get('carbonprice_include', True)
+    max_renew = kwargs.get('max_renew', 10)
+    allow_replace_same_technology = kwargs.get('allow_replace_same_technology', False)
 
     model = ConcreteModel()
+
+    # Define Big-M parameter
+    Big_M = 1e6  # Adjust this value based on your problem scale
 
     # Define sets from the loaded data
     model.technologies = Set(initialize=data['technology'].index.tolist())
@@ -88,6 +93,7 @@ def build_model_for_system(system_name, baseline_row, data, **kwargs):
     introduced_year = baseline_row['introduced_year']
     baseline_tech = baseline_row['technology']
 
+
     # Parameters
     model.capex_param = Param(model.technologies, model.years,initialize=lambda m, tech, yr: data['capex'].loc[tech, yr], default=0.0)
     model.opex_param = Param(model.technologies, model.years, initialize=lambda m, tech, yr: data['opex'].loc[tech, yr],default=0.0)
@@ -98,6 +104,30 @@ def build_model_for_system(system_name, baseline_row, data, **kwargs):
     model.material_eff_param = Param(model.materials, model.years,initialize=lambda m, mat, yr: data['material_efficiency'].loc[mat, yr],default=0.0)
     model.carbonprice_param = Param(model.years, initialize=lambda m, yr: data['carbonprice'].loc['global', yr], default=0.0)
 
+    # Parameters for Lifespan and Introduction Year
+    model.lifespan_param = Param(model.technologies,initialize=lambda m, tech: data['technology'].loc[tech, 'lifespan'], default=0)
+    model.introduced_year_param = Param(initialize=lambda m: introduced_year)
+    model.max_renew = Param(initialize=max_renew)  # Example value; set as needed
+
+    # Calculate spent_years from baseline
+    baseline_spent_years = initial_year - baseline_row['introduced_year']
+    model.spent_years = Var(model.years, within=NonNegativeReals)
+    model.lifespan_completion = Var(model.technologies, model.years, domain=Binary)  # For lifespan completion
+
+    # **Emission Parameters with Yearly Dimensions**
+    model.fuel_emission = Param(model.fuels, model.years,initialize=lambda m, f, yr: data['fuel_emission'].loc[f, yr],default=0.0)
+    model.material_emission = Param(model.materials, model.years,initialize=lambda m, mat, yr: data['material_emission'].loc[mat, yr],default=0.0)
+    model.technology_ei = Param(model.technologies, model.years,initialize=lambda m, tech, yr: data['technology_ei'].loc[tech, yr],default=1.0)
+    model.emission_limit = Param(model.years,initialize=lambda m, yr: data['emission_system'].loc[system_name, yr],default=1e9)
+    # Parameters for maximum fuel and material ratios
+    model.fuel_max_ratio = Param(model.technologies, model.fuels,initialize=lambda m, tech, fuel: data['fuel_max_ratio'].get((tech, fuel), 0),default=0.0)
+    model.material_max_ratio = Param(model.technologies, model.materials,initialize=lambda m, tech, mat: data['material_max_ratio'].get((tech, mat), 0),default=0.0)
+
+    # **Variables**
+    model.material_consumption = Var(model.materials, model.years, domain=NonNegativeReals)
+    model.emission_by_tech = Var(model.technologies, model.years, domain=NonNegativeReals)
+    model.total_material_consumption = Var(model.years, within=NonNegativeReals)
+
     # Decision Variables
     model.fuel_select = Var(model.fuels, model.years, domain=Binary)
     model.material_select = Var(model.materials, model.years, domain=Binary)
@@ -107,35 +137,6 @@ def build_model_for_system(system_name, baseline_row, data, **kwargs):
     model.fuel_consumption = Var(model.fuels, model.years, domain=NonNegativeReals)
     model.active_technology = Var(model.technologies, model.years | {introduced_year}, domain=Binary)
     model.activation_change = Var(model.technologies, model.years, domain=Binary)
-
-    # Parameters for Lifespan and Introduction Year
-    model.lifespan_param = Param(model.technologies,initialize=lambda m, tech: data['technology'].loc[tech, 'lifespan'], default=0)
-    model.introduced_year_param = Param(initialize=lambda m: introduced_year)
-
-    # **Emission Parameters with Yearly Dimensions**
-    model.fuel_emission = Param(model.fuels, model.years,initialize=lambda m, f, yr: data['fuel_emission'].loc[f, yr],default=0.0)
-    model.material_emission = Param(model.materials, model.years,initialize=lambda m, mat, yr: data['material_emission'].loc[mat, yr],default=0.0)
-    model.technology_ei = Param(model.technologies, model.years,initialize=lambda m, tech, yr: data['technology_ei'].loc[tech, yr],default=1.0)
-    model.emission_limit = Param(model.years,initialize=lambda m, yr: data['emission_system'].loc[system_name, yr],default=1e9)
-
-    # **Variables**
-    model.material_consumption = Var(model.materials, model.years, domain=NonNegativeReals)
-    model.emission_by_tech = Var(model.technologies, model.years, domain=NonNegativeReals)
-    model.total_material_consumption = Var(model.years, within=NonNegativeReals)
-    # Parameters for maximum fuel and material ratios
-    # Initialize fuel max ratio parameter
-    model.fuel_max_ratio = Param(
-        model.technologies, model.fuels,
-        initialize=lambda m, tech, fuel: data['fuel_max_ratio'].get((tech, fuel), 0),
-        default=0.0
-    )
-
-    # Initialize material max ratio parameter
-    model.material_max_ratio = Param(
-        model.technologies, model.materials,
-        initialize=lambda m, tech, mat: data['material_max_ratio'].get((tech, mat), 0),
-        default=0.0
-    )
 
     """
     Emission Constraints
@@ -215,6 +216,7 @@ def build_model_for_system(system_name, baseline_row, data, **kwargs):
     """
     Renewal Rule
     """
+
     def define_activation_change_rule(m, tech, yr):
         if yr > min(m.years):
             # activation_change = 1 if tech becomes active in yr from inactive in yr-1
@@ -265,12 +267,35 @@ def build_model_for_system(system_name, baseline_row, data, **kwargs):
 
     model.exclusivity_rule = Constraint(model.technologies, model.years, rule=exclusivity_rule)
 
+    # Define the constraint based on the allow_replace_same_technology flag
     def active_technology_rule(m, tech, yr):
-        # A technology is active if it is continued, replaced, or renewed
-        return m.active_technology[tech, yr] == m.continue_technology[tech, yr] + m.replace[tech, yr] + m.renew[
-            tech, yr]
+        return m.active_technology[tech, yr] == (
+                m.continue_technology[tech, yr] +
+                m.replace[tech, yr] +
+                m.renew[tech, yr]
+        )
 
-    model.active_technology_constraint = Constraint(model.technologies, model.years, rule=active_technology_rule)
+    # Apply the constraint to the model
+    model.active_technology_constraint = Constraint(
+        model.technologies,
+        model.years,
+        rule=active_technology_rule
+    )
+
+    # **Additional Constraint: Prevent Replacing a Technology with Itself**
+    if not allow_replace_same_technology:
+        # Constraint: If replace[tech, yr] == 1, then active_technology[tech, yr] == 0
+        # This ensures that a technology cannot be replaced by itself
+        def no_replace_with_self_rule(m, tech, yr):
+            if yr > min(m.years):
+                return m.replace[tech, yr] + m.active_technology[tech, yr-1] <= 1
+            return Constraint.Skip
+
+        model.no_replace_with_self_constraint = Constraint(
+            model.technologies,
+            model.years,
+            rule=no_replace_with_self_rule
+        )
 
     def single_active_technology_rule(m, yr):
         # Ensure only one technology is active in a given year
@@ -287,6 +312,12 @@ def build_model_for_system(system_name, baseline_row, data, **kwargs):
         return Constraint.Skip
 
     model.introduction_year_constraint = Constraint(model.technologies, model.years, rule=introduction_year_constraint_rule)
+
+    def renew_limit_rule(m, tech):
+        return sum(m.renew[tech, yr] for yr in m.years) <= m.max_renew
+
+    model.renew_limit_constraint = Constraint(model.technologies, rule=renew_limit_rule)
+
 
     """
     Constraints for Fuel
@@ -316,9 +347,6 @@ def build_model_for_system(system_name, baseline_row, data, **kwargs):
     model.total_fuel_consumption_constraint = Constraint(
         model.years, rule=total_fuel_consumption_rule
     )
-
-    # Define Big-M parameter
-    Big_M = 1e6  # Adjust this value based on your problem scale
 
     # Rule for maximum fuel share constraint
     def fuel_max_share_constraint_rule(m, tech, f, yr):
@@ -391,9 +419,6 @@ def build_model_for_system(system_name, baseline_row, data, **kwargs):
     model.total_material_consumption_constraint = Constraint(
         model.years, rule=total_material_consumption_rule
     )
-
-    # Define Big-M parameter
-    Big_M = 1e6  # Adjust this value based on the scale of your problem
 
     # Define the material max share constraint with Big-M reformulation
     def material_max_share_constraint_rule(m, tech, mat, yr):
@@ -488,8 +513,10 @@ def build_model_for_system(system_name, baseline_row, data, **kwargs):
 
 def main(**kwargs):
 
-    carbonprice_include = kwargs.get('carboprice_include', False)
-
+    carbonprice_include = kwargs.get('carboprice_include', True)
+    hard_lifespan = kwargs.get('hard_lifespan', True)
+    max_renew = kwargs.get('max_renew', 10)
+    allow_replace_same_technology = kwargs.get('allow_replace_same_technology', False)
     # Load data
     file_path = 'database/steel_data.xlsx'
     data = load_data(file_path)
@@ -502,7 +529,11 @@ def main(**kwargs):
         baseline_row = data['baseline'].loc[system_name]
 
         # Build and solve the model
-        model = build_model_for_system(system_name, baseline_row, data, carbonprice_include=carbonprice_include)
+        model = build_model_for_system(system_name, baseline_row, data,
+                                       carbonprice_include=carbonprice_include,
+                                       max_renew=max_renew,
+                                       allow_replace_same_technology=allow_replace_same_technology,
+                                       hard_lifespan = hard_lifespan)
         result = solver.solve(model, tee=True)
 
         if result.solver.status == 'ok' and result.solver.termination_condition == 'optimal':
@@ -617,4 +648,7 @@ def main(**kwargs):
                 f"Solver failed for {system_name}. Status: {result.solver.status}, Condition: {result.solver.termination_condition}")
 
 if __name__ == "__main__":
-    main(carboprice_include=True)
+    main(carboprice_include=True,
+         max_renew = 1,
+         allow_replace_same_technology = False,
+         hard_lifespan = True) # soft lifespan does not work well
