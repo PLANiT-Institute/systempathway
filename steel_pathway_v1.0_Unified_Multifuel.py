@@ -1,70 +1,28 @@
 from pyomo.environ import (
     ConcreteModel, Var, NonNegativeReals, Binary, Param,
-    Objective, Constraint, SolverFactory, Set, minimize, value
+    Objective, Constraint, SolverFactory, Set, minimize, value, Any
 )
 from pyomo.util.infeasible import log_infeasible_constraints
 import pandas as pd
 
-def load_data(file_path):
-    """
-    Load all relevant data from the Excel file.
-    """
-    data = {}
+import importlib
+import utils.load_data as _ld
+import utils.output_analysis as _oa
 
-    # Load baseline data (existing furnace sites)
-    data['baseline'] = pd.read_excel(file_path, sheet_name='baseline', index_col=0)
+importlib.reload(_ld)
 
-    # Load potential furnace technologies
-    data['technology'] = pd.read_excel(file_path, sheet_name='technology', index_col=0)
-
-    # Load fuel-related data
-    data['fuel_cost'] = pd.read_excel(file_path, sheet_name='fuel_cost', index_col=0)
-    data['fuel_efficiency'] = pd.read_excel(file_path, sheet_name='fuel_efficiency', index_col=0)
-    data['fuel_emission'] = pd.read_excel(file_path, sheet_name='fuel_emission', index_col=0)
-
-    # Load material-related data
-    data['material_cost'] = pd.read_excel(file_path, sheet_name='material_cost', index_col=0)
-    data['material_efficiency'] = pd.read_excel(file_path, sheet_name='material_efficiency', index_col=0)
-    data['material_emission'] = pd.read_excel(file_path, sheet_name='material_emission', index_col=0)
-
-    # Load financial data
-    data['capex'] = pd.read_excel(file_path, sheet_name='capex', index_col=0)
-    data['opex'] = pd.read_excel(file_path, sheet_name='opex', index_col=0)
-    data['renewal'] = pd.read_excel(file_path, sheet_name='renewal', index_col=0)
-    data['emission'] = pd.read_excel(file_path, sheet_name='emission', index_col=0)
-    data['carbonprice'] = pd.read_excel(file_path, sheet_name='carbonprice', index_col=0)
-
-    # Load technology emission intensities and pairings
-    data['technology_ei'] = pd.read_excel(file_path, sheet_name='technology_ei', index_col=0)
-    data['technology_fuel_pairs'] = pd.read_excel(file_path, sheet_name='technology_fuel_pairs').groupby('technology')['fuel'].apply(list).to_dict()
-    data['technology_material_pairs'] = \
-pd.read_excel(file_path, sheet_name='technology_material_pairs').groupby('technology')['material'].apply(list).to_dict()
-    data['technology_introduction'] = pd.read_excel(file_path, sheet_name='technology', index_col=0)[
-        'introduction'].to_dict()
-    technology_fuel_pairs_df = pd.read_excel(file_path, sheet_name='technology_fuel_pairs')
-
-    data['fuel_max_ratio'] = technology_fuel_pairs_df.set_index(['technology', 'fuel'])['max'].to_dict()
-    data['fuel_min_ratio'] = technology_fuel_pairs_df.set_index(['technology', 'fuel'])['min'].to_dict()
-    technology_material_pairs_df = pd.read_excel(file_path, sheet_name='technology_material_pairs')
-
-    data['material_max_ratio'] = technology_material_pairs_df.set_index(['technology', 'material'])['max'].to_dict()
-    data['material_min_ratio'] = technology_material_pairs_df.set_index(['technology', 'material'])['min'].to_dict()
-
-
-    return data
 
 def build_unified_model(data, **kwargs):
     """
     Get kwargs
     """
-    carbonprice_include = kwargs.get('carbonprice_include', True)
+    carbonprice_include = kwargs.get('carbonprice_include', False)
     max_renew = kwargs.get('max_renew', 10)
     allow_replace_same_technology = kwargs.get('allow_replace_same_technology', False)
 
     """
     Build the unified Pyomo model.
     """
-
 
     model = ConcreteModel()
 
@@ -76,6 +34,39 @@ def build_unified_model(data, **kwargs):
     model.fuels = Set(initialize=data['fuel_cost'].index.tolist())
     model.materials = Set(initialize=data['material_cost'].index.tolist())
     model.years = Set(initialize=sorted([int(yr) for yr in data['capex'].columns.tolist()]))
+
+
+    # Extract and structure multi-fuel data by system and technology
+    baseline_fuels_data = {
+        sys: row['fuels']
+        for sys, row in data['baseline'].iterrows()
+    }
+    baseline_fuel_shares_data = {
+        sys: row['fuel_shares']
+        for sys, row in data['baseline'].iterrows()
+    }
+
+    # Similarly, for materials
+    baseline_materials_data = {
+        sys: row['materials']
+        for sys, row in data['baseline'].iterrows()
+    }
+    baseline_material_shares_data = {
+        sys: row['material_shares']
+        for sys, row in data['baseline'].iterrows()
+    }
+
+    # Define parameters for baseline fuels and materials
+    model.baseline_fuels = Param(model.systems, initialize=baseline_fuels_data, within=Any)
+    model.baseline_fuel_shares = Param(model.systems, initialize=baseline_fuel_shares_data, within=Any)
+    model.baseline_materials = Param(model.systems, initialize=baseline_materials_data, within=Any)
+    model.baseline_material_shares = Param(model.systems, initialize=baseline_material_shares_data, within=Any)
+
+    baseline_production_data = {
+        sys: baseline_row['production'] for sys, baseline_row in data['baseline'].iterrows()
+    }
+    model.baseline_production = Param(model.systems, initialize=baseline_production_data, within=NonNegativeReals)
+
 
     # --------------------------
     # 2. Define Parameters
@@ -152,20 +143,12 @@ def build_unified_model(data, **kwargs):
         within=model.technologies
     )
 
-    model.baseline_fuel = Param(
-        model.systems,
-        initialize=lambda m, sys: data['baseline'].loc[sys, 'fuel'],
-        within=model.fuels
-    )
-
-
 
     # --------------------------
     # 3. Define Decision Variables
     # --------------------------
     # Binary Variables
     model.replace = Var(model.systems, model.technologies, model.years, domain=Binary, initialize=0)
-    model.renew = Var(model.systems, model.technologies, model.years, domain=Binary, initialize=0)
     model.active_technology = Var(model.systems, model.technologies, model.years, domain=Binary, initialize=0)
     model.continue_technology = Var(model.systems, model.technologies, model.years, domain=Binary, initialize=0)
     model.fuel_select = Var(model.systems, model.fuels, model.years, domain=Binary, initialize=0)
@@ -192,7 +175,9 @@ def build_unified_model(data, **kwargs):
     model.renew = Var(model.systems, model.technologies, model.years, domain=Binary)
     model.max_renew = Param(initialize=max_renew)  # Example value; set as needed
 
-
+    # 1. Total Fuel Consumption for Each System
+    model.total_fuel_consumption = Var(model.systems, model.years, within=NonNegativeReals)
+    model.total_material_consumption = Var(model.systems, model.years, within=NonNegativeReals)
     # --------------------------
     # 4. Define Constraints
     # --------------------------
@@ -257,18 +242,82 @@ def build_unified_model(data, **kwargs):
         model.systems, model.technologies, model.years, rule=non_baseline_technologies_first_year_rule
     )
 
-    # Lock the fuel selection for the initial year
     def hard_baseline_fuel_rule(m, sys, f, yr):
-        if yr == min(m.years):  # Lock the fuel selection for the initial year
-            baseline_fuel = m.baseline_fuel[sys]
-            if f == baseline_fuel:
-                return m.fuel_select[sys, f, yr] == 1  # Must use the baseline fuel
+        if yr == min(m.years):  # Baseline year
+            if f in m.baseline_fuels[sys]:
+                # Ensure baseline fuels are selected
+                return m.fuel_select[sys, f, yr] == 1
             else:
-                return m.fuel_select[sys, f, yr] == 0  # Other fuels cannot be selected
+                # Ensure non-baseline fuels are not selected
+                return m.fuel_select[sys, f, yr] == 0
         return Constraint.Skip
 
     model.hard_baseline_fuel_constraint = Constraint(
         model.systems, model.fuels, model.years, rule=hard_baseline_fuel_rule
+    )
+
+    def hard_baseline_material_rule(m, sys, mat, yr):
+        if yr == min(m.years):  # Baseline year
+            if mat in m.baseline_materials[sys]:
+                # Ensure baseline fuels are selected
+                return m.material_select[sys, mat, yr] == 1
+            else:
+                # Ensure non-baseline fuels are not selected
+                return m.material_select[sys, mat, yr] == 0
+        return Constraint.Skip
+
+
+    model.hard_baseline_material_constraint = Constraint(
+        model.systems, model.materials, model.years,
+        rule=hard_baseline_material_rule
+    )
+
+    def baseline_fuel_share_rule(m, sys, fuel, yr):
+            """Enforce that in the baseline year, each system's fuel consumption
+            matches baseline production × share × fuel efficiency."""
+
+            # Only apply in the baseline year(s); skip for other years if you have multiple
+            if yr == min(m.years) and fuel in m.baseline_fuels[sys]:
+                # Find the correct index for this fuel in baseline_fuels
+                idx = m.baseline_fuels[sys].index(fuel)
+
+                return m.fuel_consumption[sys, fuel, yr] == (
+                        m.baseline_fuel_shares[sys][idx]
+                        * m.baseline_production[sys]
+                        * m.fuel_eff_param[fuel, yr]
+                )
+            else:
+                return Constraint.Skip
+
+    model.baseline_fuel_share_constraint = Constraint(
+        model.systems, model.fuels, model.years,
+        rule=baseline_fuel_share_rule
+    )
+
+    def baseline_material_share_rule(m, sys, mat, yr):
+        """Enforce that in the baseline year, each system's material consumption
+        matches baseline production × material share × (optionally) material efficiency."""
+
+        # Only apply in the baseline year(s); skip for others
+        if yr == min(m.years) and mat in m.baseline_materials[sys]:
+            # Find the correct index for this material
+            idx = m.baseline_materials[sys].index(mat)
+
+            # If you do NOT have a separate 'material_eff_param', remove it from the formula
+            return (
+                    m.material_consumption[sys, mat, yr] ==
+                    m.baseline_material_shares[sys][idx]
+                    * m.baseline_production[sys]
+                    * m.material_eff_param[mat, yr]
+            )
+        else:
+            return Constraint.Skip
+
+    model.baseline_material_share_constraint = Constraint(
+        model.systems,
+        model.materials,
+        model.years,
+        rule=baseline_material_share_rule
     )
 
     # **Additional Constraint: Prevent Replacing a Technology with Itself**
@@ -401,8 +450,6 @@ def build_unified_model(data, **kwargs):
 
     model.fuel_selection_constraint = Constraint(model.systems, model.years, rule=fuel_selection_rule)
 
-    # 1. Total Fuel Consumption for Each System
-    model.total_fuel_consumption = Var(model.systems, model.years, within=NonNegativeReals)
 
     def total_fuel_consumption_rule(m, sys, yr):
         # Total fuel consumption per system for each year
@@ -419,37 +466,38 @@ def build_unified_model(data, **kwargs):
     # 5. Maximum Fuel Share Constraint
 
     def fuel_max_share_constraint_rule(m, sys, tech, f, yr):
-        # Get the maximum allowable share for the (technology, fuel) combination
-        max_share = data['fuel_max_ratio'].get((tech, f), 0)
-        return m.fuel_consumption[sys, f, yr] <= (
-                max_share * m.total_fuel_consumption[sys, yr] + M_fuel * (1 - m.active_technology[sys, tech, yr])
-        )
+        if yr > min(m.years):
+            # Get the maximum allowable share for the (technology, fuel) combination
+            max_share = data['fuel_max_ratio'].get((tech, f), 0)
+            return m.fuel_consumption[sys, f, yr] <= (
+                    max_share * m.total_fuel_consumption[sys, yr] + M_fuel * (1 - m.active_technology[sys, tech, yr])
+            )
+        else:
+            return Constraint.Skip
 
     model.fuel_max_share_constraint = Constraint(
         model.systems, model.technologies, model.fuels, model.years, rule=fuel_max_share_constraint_rule
     )
 
-    # # 4. Fuel Consumption Limit
-    # def fuel_consumption_limit_rule(m, sys, f, yr):
-    #     return m.fuel_consumption[sys, f, yr] <= M_fuel * m.fuel_select[sys, f, yr]
-    #
-    # model.fuel_consumption_limit_constraint = Constraint(model.systems, model.fuels, model.years,
-    #                                                      rule=fuel_consumption_limit_rule)
-    #
-    # model.fuel_consumption_limit_constraint = Constraint(
-    #     model.systems, model.fuels, model.years, rule=fuel_consumption_limit_rule
-    # )
-    # 6. Minimum Fuel Share Constraint
     def fuel_min_share_constraint_rule(m, sys, tech, f, yr):
-        # Get the minimum allowable share for the (technology, fuel) combination
+        # Look up the introduction year for this fuel
+        introduction_year = data['fuel_introduction'].loc[f]
+
+        # If we're before the introduction year, enforce zero consumption
+        if yr < introduction_year:
+            return m.fuel_consumption[sys, f, yr] == 0
+
+        # Otherwise, apply the minimum-share constraint
         min_share = data['fuel_min_ratio'].get((tech, f), 0)
         return m.fuel_consumption[sys, f, yr] >= (
-                min_share * m.total_fuel_consumption[sys, yr] - M_fuel * (1 - m.active_technology[sys, tech, yr])
+                min_share * m.total_fuel_consumption[sys, yr]
+                - M_fuel * (1 - m.active_technology[sys, tech, yr])
         )
 
     model.fuel_min_share_constraint = Constraint(
         model.systems, model.technologies, model.fuels, model.years, rule=fuel_min_share_constraint_rule
     )
+
 
     """
     Material Constraints
@@ -473,8 +521,6 @@ def build_unified_model(data, **kwargs):
     model.material_selection_constraint = Constraint(model.systems, model.years, rule=material_selection_rule)
 
     # 1. Total Material Consumption for Each System
-    model.total_material_consumption = Var(model.systems, model.years, within=NonNegativeReals)
-
     def total_material_consumption_rule(m, sys, yr):
         # Total material consumption per system for each year
         return m.total_material_consumption[sys, yr] == sum(
@@ -487,35 +533,60 @@ def build_unified_model(data, **kwargs):
 
     # 5. Maximum Material Share Constraint
     def material_max_share_constraint_rule(m, sys, tech, mat, yr):
-        # Get the maximum allowable share for the (technology, material) combination
-        max_share = data['material_max_ratio'].get((tech, mat), 0)
-        return m.material_consumption[sys, mat, yr] <= (
-                max_share * m.total_material_consumption[sys, yr] + M_mat * (1 - m.active_technology[sys, tech, yr])
-        )
+        if yr > min(m.years):
+
+            # Get the maximum allowable share for the (technology, material) combination
+            max_share = data['material_max_ratio'].get((tech, mat), 0)
+            return m.material_consumption[sys, mat, yr] <= (
+                    max_share * m.total_material_consumption[sys, yr] + M_mat * (1 - m.active_technology[sys, tech, yr])
+            )
+        else:
+            return Constraint.Skip
 
     model.material_max_share_constraint = Constraint(
         model.systems, model.technologies, model.materials, model.years, rule=material_max_share_constraint_rule
     )
 
-    # 6. Minimum Material Share Constraint
     def material_min_share_constraint_rule(m, sys, tech, mat, yr):
-        # Get the minimum allowable share for the (technology, material) combination
+        # Pull the introduction year from your data
+        introduction_year = data['material_introduction'].loc[mat]
+
+        # For years before introduction, force zero consumption
+        if yr < introduction_year:
+            return m.material_consumption[sys, mat, yr] == 0
+
+        # For introduced materials, apply the min-share logic
         min_share = data['material_min_ratio'].get((tech, mat), 0)
+
+        # M_mat is your chosen "big M" for materials; you already define it above.
+        # The constraint says: if technology (sys, tech) is active,
+        # material_consumption >= min_share * total_material_consumption
+        # Otherwise, it can be relaxed by up to M_mat if the tech is not active.
         return m.material_consumption[sys, mat, yr] >= (
-                min_share * m.total_material_consumption[sys, yr] - M_mat * (1 - m.active_technology[sys, tech, yr])
+                min_share * m.total_material_consumption[sys, yr]
+                - M_mat * (1 - m.active_technology[sys, tech, yr])
         )
 
     model.material_min_share_constraint = Constraint(
-        model.systems, model.technologies, model.materials, model.years, rule=material_min_share_constraint_rule
+        model.systems, model.technologies, model.materials, model.years,
+        rule=material_min_share_constraint_rule
     )
 
-    # # 4. Material Consumption Limit
-    # def material_consumption_limit_rule(m, sys, mat, yr):
-    #     # Material consumption is limited by material selection
-    #     return m.material_consumption[sys, mat, yr] <= M_mat * m.material_select[sys, mat, yr]
+    # # 6. Minimum Material Share Constraint
+    # def material_min_share_constraint_rule(m, sys, tech, mat, yr):
+    #     if yr > min(m.years):
     #
-    # model.material_consumption_limit_constraint = Constraint(
-    #     model.systems, model.materials, model.years, rule=material_consumption_limit_rule
+    #         # Get the minimum allowable share for the (technology, material) combination
+    #         min_share = data['material_min_ratio'].get((tech, mat), 0)
+    #         return m.material_consumption[sys, mat, yr] >= (
+    #                 min_share * m.total_material_consumption[sys, yr] -
+    #                 M_mat * (1 - m.active_technology[sys, tech, yr])
+    #         )
+    #     else:
+    #         return Constraint.Skip
+    #
+    # model.material_min_share_constraint = Constraint(
+    #     model.systems, model.technologies, model.materials, model.years, rule=material_min_share_constraint_rule
     # )
 
     """
@@ -637,160 +708,6 @@ def build_unified_model(data, **kwargs):
 
     return model
 
-def display_selected_technologies(model):
-    print("\n=== Selected Technologies per System per Year ===\n")
-    for sys in model.systems:
-        for yr in model.years:
-            selected_techs = []
-            for tech in model.technologies:
-                if pyomo_value(model.active_technology[sys, tech, yr]) > 0.5:
-                    selected_techs.append(tech)
-            techs_str = ', '.join(selected_techs) if selected_techs else 'None'
-            print(f"System: {sys}, Year: {yr}, Technology: {techs_str}")
-
-def display_selected_fuels(model):
-    print("\n=== Selected Fuels per System per Year ===\n")
-    for sys in model.systems:
-        for yr in model.years:
-            selected_fuels = []
-            for fuel in model.fuels:
-                if pyomo_value(model.fuel_select[sys, fuel, yr]) > 0.5:
-                    selected_fuels.append(fuel)
-            fuels_str = ', '.join(selected_fuels) if selected_fuels else 'None'
-            print(f"System: {sys}, Year: {yr}, Fuel: {fuels_str}")
-
-def display_selected_materials(model):
-    print("\n=== Selected Materials per System per Year ===\n")
-    for sys in model.systems:
-        for yr in model.years:
-            selected_mats = []
-            for mat in model.materials:
-                if pyomo_value(model.material_select[sys, mat, yr]) > 0.5:
-                    selected_mats.append(mat)
-            mats_str = ', '.join(selected_mats) if selected_mats else 'None'
-            print(f"System: {sys}, Year: {yr}, Material: {mats_str}")
-
-def display_production_levels(model):
-    print("\n=== Production Levels per System per Year ===\n")
-    for sys in model.systems:
-        for yr in model.years:
-            production = pyomo_value(model.production[sys, yr])
-            print(f"System: {sys}, Year: {yr}, Production: {production}")
-
-def display_total_cost(model):
-    total_cost = pyomo_value(model.total_cost)
-    print(f"\n=== Total Cost of the Solution: {total_cost} ===\n")
-
-def export_results_to_excel(model, annual_global_capex, annual_global_renewal_cost, annual_global_opex, annual_global_total_emissions):
-    """
-    Export detailed results to an Excel file with separate sheets for each furnace site
-    and a summary sheet for annual global metrics.
-    """
-    with pd.ExcelWriter('model_results.xlsx') as writer:
-        # Iterate over each system to create separate sheets
-        for sys in model.systems:
-            # Initialize lists to store yearly data
-            yearly_metrics = []
-            fuel_consumption_table = []
-            material_consumption_table = []
-            technology_statuses = []
-
-            # Extract baseline technology information
-            baseline_tech = data['baseline'].loc[sys, 'technology']
-            introduced_year = data['baseline'].loc[sys, 'introduced_year']
-            lifespan = model.lifespan_param[baseline_tech]
-
-            for yr in model.years:
-                # Calculate Costs
-                capex_cost = sum(
-                    model.capex_param[tech, yr] * value(model.replace_prod_active[sys, tech, yr])
-                    for tech in model.technologies
-                )
-
-                if yr == min(model.years):
-                    if baseline_tech in model.technologies:
-                        capex_adjustment = model.capex_param[baseline_tech, yr] * (
-                            (lifespan - (yr - introduced_year)) / lifespan
-                        ) * value(model.production[sys, yr])
-                        capex_cost += capex_adjustment
-                    else:
-                        print(f"Warning: Baseline technology '{baseline_tech}' not found in model.technologies for system '{sys}'.")
-
-                renewal_cost = sum(
-                    model.renewal_param[tech, yr] * value(model.renew_prod_active[sys, tech, yr])
-                    for tech in model.technologies
-                )
-
-                opex_cost = sum(
-                    model.opex_param[tech, yr] * value(model.prod_active[sys, tech, yr])
-                    for tech in model.technologies
-                )
-
-                total_emissions = sum(
-                    value(model.emission_by_tech[sys, tech, yr]) for tech in model.technologies
-                )
-
-                fuel_consumption = {
-                    fuel: value(model.fuel_consumption[sys, fuel, yr]) for fuel in model.fuels
-                }
-
-                material_consumption = {
-                    mat: value(model.material_consumption[sys, mat, yr]) for mat in model.materials
-                }
-
-                yearly_metrics.append({
-                    "Year": yr,
-                    "CAPEX": capex_cost,
-                    "Renewal Cost": renewal_cost,
-                    "OPEX": opex_cost,
-                    "Total Emissions": total_emissions
-                })
-
-                fuel_consumption_table.append({"Year": yr, **fuel_consumption})
-                material_consumption_table.append({"Year": yr, **material_consumption})
-
-                for tech in model.technologies:
-                    technology_statuses.append({
-                        "Year": yr,
-                        "Technology": tech,
-                        "Continue": value(model.continue_technology[sys, tech, yr]),
-                        "Replace": value(model.replace[sys, tech, yr]),
-                        "Renew": value(model.renew[sys, tech, yr]),
-                        "Active": value(model.active_technology[sys, tech, yr])
-                    })
-
-            # Convert Yearly Metrics to DataFrame
-            costs_df = pd.DataFrame(yearly_metrics).set_index("Year")
-            costs_df.to_excel(writer, sheet_name=f'{sys}_Costs_and_Emissions')
-
-            # Convert Fuel Consumption to DataFrame
-            fuel_df = pd.DataFrame(fuel_consumption_table).set_index("Year")
-            fuel_df.to_excel(writer, sheet_name=f'{sys}_Fuel_Consumption')
-
-            # Convert Material Consumption to DataFrame
-            material_df = pd.DataFrame(material_consumption_table).set_index("Year")
-            material_df.to_excel(writer, sheet_name=f'{sys}_Material_Consumption')
-
-            # Convert Technology Statuses to DataFrame
-            technology_df = pd.DataFrame(technology_statuses)
-            technology_df.to_excel(writer, sheet_name=f'{sys}_Technology_Statuses', index=False)
-
-        # Create a summary sheet for annual global metrics
-        annual_summary = []
-        for yr in sorted(model.years):
-            total_cost = annual_global_capex[yr] + annual_global_renewal_cost[yr] + annual_global_opex[yr]
-            annual_summary.append({
-                "Year": yr,
-                "Total CAPEX": annual_global_capex[yr],
-                "Total Renewal Cost": annual_global_renewal_cost[yr],
-                "Total OPEX": annual_global_opex[yr],
-                "Total Cost": total_cost,
-                "Total Emissions": annual_global_total_emissions[yr]
-            })
-
-        annual_summary_df = pd.DataFrame(annual_summary).set_index("Year")
-        annual_summary_df.to_excel(writer, sheet_name='Annual_Global_Summary')
-
 
 def main(**kwargs):
 
@@ -802,7 +719,7 @@ def main(**kwargs):
     # 7. Load Data
     # --------------------------
     file_path = 'database/steel_data.xlsx'  # Update with your actual file path
-    data = load_data(file_path)
+    data = _ld.load_data(file_path)
 
     # --------------------------
     # 8. Build the Unified Model
@@ -1004,7 +921,6 @@ def main(**kwargs):
 
 if __name__ == "__main__":
 
-    for i in range(1, 10):
-        main(carboprice_include=True,
-             max_renew = 2,
-             allow_replace_same_technology = False)
+    main(carboprice_include=True,
+         max_renew = 2,
+         allow_replace_same_technology = False)
