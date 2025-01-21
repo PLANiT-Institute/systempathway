@@ -801,7 +801,7 @@ def main(**kwargs):
     # --------------------------
     # 7. Load Data
     # --------------------------
-    file_path = 'database/steel_data.xlsx'  # Update with your actual file path
+    file_path = '../database/steel_data.xlsx'  # Update with your actual file path
     data = load_data(file_path)
 
     # --------------------------

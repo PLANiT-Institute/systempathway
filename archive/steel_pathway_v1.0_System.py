@@ -518,7 +518,7 @@ def main(**kwargs):
     max_renew = kwargs.get('max_renew', 10)
     allow_replace_same_technology = kwargs.get('allow_replace_same_technology', False)
     # Load data
-    file_path = 'database/steel_data.xlsx'
+    file_path = '../database/steel_data.xlsx'
     data = load_data(file_path)
     solver = SolverFactory('glpk')
     results_dict = {}
