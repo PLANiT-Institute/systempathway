@@ -686,7 +686,7 @@ def export_results_to_excel(model, annual_global_capex, annual_global_renewal_co
     Export detailed results to an Excel file with separate sheets for each furnace site
     and a summary sheet for annual global metrics.
     """
-    with pd.ExcelWriter('model_results.xlsx') as writer:
+    with pd.ExcelWriter('../model_results.xlsx') as writer:
         # Iterate over each system to create separate sheets
         for sys in model.systems:
             # Initialize lists to store yearly data
@@ -801,7 +801,7 @@ def main(**kwargs):
     # --------------------------
     # 7. Load Data
     # --------------------------
-    file_path = 'database/steel_data.xlsx'  # Update with your actual file path
+    file_path = '../database/steel_data.xlsx'  # Update with your actual file path
     data = load_data(file_path)
 
     # --------------------------
