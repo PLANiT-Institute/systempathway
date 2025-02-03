@@ -196,24 +196,7 @@ def main(**kwargs):
         # Display the DataFrame
         print("\n=== Technology Statuses ===\n")
         print(technology_df_filtered)
-    # --------------------------
-    # 13. Display Annual Global Metrics
-    # --------------------------
-    # print("\n=== Annual Global Total Costs and Emissions ===")
-    # annual_summary = []
-    # for yr in sorted(model.years):
-    #     total_cost = annual_global_capex[yr] + annual_global_renewal_cost[yr] + annual_global_opex[yr]
-    #     annual_summary.append({
-    #         "Year": yr,
-    #         "Total CAPEX": annual_global_capex[yr],
-    #         "Total Renewal Cost": annual_global_renewal_cost[yr],
-    #         "Total OPEX": annual_global_opex[yr],
-    #         "Total Cost": total_cost,
-    #         "Total Emissions": annual_global_total_emissions[yr]
-    #     })
-    #
-    # annual_summary_df = pd.DataFrame(annual_summary).set_index("Year")
-    # print(annual_summary_df)
+
 
     # --------------------------
     # 13. Display Annual Global Metrics
