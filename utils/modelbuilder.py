@@ -1033,23 +1033,6 @@ def build_unified_model(data, **kwargs):
         rule=material_min_share_constraint_rule
     )
 
-    # # 6. Minimum Material Share Constraint
-    # def material_min_share_constraint_rule(m, sys, tech, mat, yr):
-    #     if yr > min(m.years):
-    #
-    #         # Get the minimum allowable share for the (technology, material) combination
-    #         min_share = data['material_min_ratio'].get((tech, mat), 0)
-    #         return m.material_consumption[sys, mat, yr] >= (
-    #                 min_share * m.total_material_consumption[sys, yr] -
-    #                 M_mat * (1 - m.active_technology[sys, tech, yr])
-    #         )
-    #     else:
-    #         return Constraint.Skip
-    #
-    # model.material_min_share_constraint = Constraint(
-    #     model.systems, model.technologies, model.materials, model.years, rule=material_min_share_constraint_rule
-    # )
-
     """
     Objective Function
     """
