@@ -252,6 +252,7 @@ def main(**kwargs):
     # annual_summary_df.to_excel("model_results.xlsx")
     print(annual_summary_df)
 
+    return annual_summary_df
     # Optionally, export the annual summary to Excel or another format
 
     # --------------------------
@@ -262,6 +263,6 @@ def main(**kwargs):
 
 if __name__ == "__main__":
 
-    main(carboprice_include=False,
+    output = main(carboprice_include=False,
          max_renew = 1,
          allow_replace_same_technology = False)
