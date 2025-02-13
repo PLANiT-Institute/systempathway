@@ -473,7 +473,6 @@ def build_model_for_system(system_name, baseline_row, data, **kwargs):
 
     return model
 
-
 def build_unified_model(data, **kwargs):
     """
     Get kwargs

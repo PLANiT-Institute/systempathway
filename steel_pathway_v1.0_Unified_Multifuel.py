@@ -1,6 +1,5 @@
-from pyomo.environ import (
-    NonNegativeReals, Binary, SolverFactory, value, Any
-)
+from pyomo.environ import *
+
 from pyomo.util.infeasible import log_infeasible_constraints
 import pandas as pd
 
@@ -35,9 +34,11 @@ def main(**kwargs):
     # --------------------------
     # 9. Solve the Model
     # --------------------------
-    solver = SolverFactory('glpk')  # Ensure GLPK is installed
+    # Try solving
+    solver = SolverFactory("glpk")
+
     if not solver.available():
-        raise RuntimeError("GLPK solver is not available. Please install it or choose another solver.")
+        raise RuntimeError("Solver is not available.")
 
     result = solver.solve(model, tee=True)
 
