@@ -20,7 +20,7 @@ def main(**kwargs):
     # --------------------------
     # 7. Load Data
     # --------------------------
-    file_path = 'database/steel_data2.xlsx'  # Update with your actual file path
+    file_path = 'database/steel_data.xlsx'  # Update with your actual file path
     data = _ld.load_data(file_path)
 
     # --------------------------
@@ -235,6 +235,7 @@ def main(**kwargs):
     # annual_summary_df.to_excel("model_results.xlsx")
     print(annual_summary_df)
 
+    return annual_summary_df
     # Optionally, export the annual summary to Excel or another format
 
     # --------------------------
@@ -245,6 +246,6 @@ def main(**kwargs):
 
 if __name__ == "__main__":
 
-    main(carboprice_include=False,
+    output = main(carboprice_include=False,
          max_renew = 10,
          allow_replace_same_technology = False)
