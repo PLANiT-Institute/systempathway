@@ -16,11 +16,28 @@ def check_introduced_year_constraints(data):
 
     for system, row in data['baseline'].iterrows():
         tech = row['technology']
-        introduced_year = data['technology'].loc[tech, 'introduction']
+        introduced_year = row['introduced_year']
 
         if baseline_year < introduced_year:
             issues.append(
                 f"System {system}: Technology {tech} is used before its introduction year ({introduced_year}).")
+
+    return issues
+
+
+def check_lifespan_constraints(data):
+    """Ensure that technology lifespan does not expire before the baseline year."""
+    issues = []
+    baseline_year = 2025
+
+    for system, row in data['baseline'].iterrows():
+        tech = row['technology']
+        introduced_year = row['introduced_year']
+        lifespan = data['technology'].loc[tech, 'lifespan']
+
+        if introduced_year + lifespan < baseline_year:
+            issues.append(
+                f"System {system}: Technology {tech} was introduced in {introduced_year} with lifespan {lifespan}, expiring before the baseline year {baseline_year}.")
 
     return issues
 
@@ -58,7 +75,7 @@ def validate_tech_fuel_material_pairs(data):
 
 
 def verify_baseline_emission_consistency(data):
-    """Check if baseline year emissions match calculated emissions."""
+    """Check if baseline year emissions match or exceed calculated emissions."""
     issues = []
     baseline_year = 2025
 
@@ -84,24 +101,25 @@ def verify_baseline_emission_consistency(data):
                     total_fuel_emission + total_material_emission)
         reported_emission = data['emission_system'].loc[system, baseline_year]
 
-        if abs(calculated_emission - reported_emission) > 1e-3:
+        if reported_emission < calculated_emission:
             issues.append(
-                f"System {system}: Emission discrepancy. Reported: {reported_emission}, Calculated: {calculated_emission}.")
+                f"System {system}: Reported emission {reported_emission} is lower than calculated emission {calculated_emission}.")
 
     return issues
 
 
-def check_pair_matching(data):
-    """Ensure assigned tech-fuel and tech-material pairs match expectations."""
+def check_baseline_shares(data):
+    """Ensure that fuel and material shares do not exceed 1 in the baseline year."""
     issues = []
 
-    for tech in data['technology_fuel_pairs']:
-        if tech not in data['technology_material_pairs']:
-            issues.append(f"Technology {tech} has fuel pairs but no material pairs defined.")
+    for system, row in data['baseline'].iterrows():
+        fuel_share_sum = sum(row['fuel_shares'])
+        material_share_sum = sum(row['material_shares'])
 
-    for tech in data['technology_material_pairs']:
-        if tech not in data['technology_fuel_pairs']:
-            issues.append(f"Technology {tech} has material pairs but no fuel pairs defined.")
+        if fuel_share_sum > 1:
+            issues.append(f"System {system}: Sum of fuel shares ({fuel_share_sum}) exceeds 1.")
+        if material_share_sum > 1:
+            issues.append(f"System {system}: Sum of material shares ({material_share_sum}) exceeds 1.")
 
     return issues
 
@@ -110,9 +128,10 @@ def validate_data(data):
     """Run all validation functions and return issues."""
     issues = {
         "Introduced Year Constraints": check_introduced_year_constraints(data),
+        "Lifespan Constraints": check_lifespan_constraints(data),
         "Tech-Fuel and Tech-Material Pairs": validate_tech_fuel_material_pairs(data),
         "Baseline Emission Consistency": verify_baseline_emission_consistency(data),
-        "Pair Matching Consistency": check_pair_matching(data),
+        "Baseline Shares Consistency": check_baseline_shares(data),
     }
 
     return issues
