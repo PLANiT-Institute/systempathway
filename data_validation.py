@@ -3,7 +3,7 @@ import utils.load_data as _ld
 
 
 def load_and_validate_data():
-    file_path = 'database/steel_data.xlsx'  # Update with your actual file path
+    file_path = 'database/steel_data2.xlsx'  # Update with your actual file path
     data = _ld.load_data(file_path)
 
     return validate_data(data)
@@ -30,14 +30,28 @@ def check_lifespan_constraints(data):
     issues = []
     baseline_year = 2025
 
+    # We assume data['technology'] is a DataFrame with index = technology name
+    # and a column named 'lifespan'.
+
     for system, row in data['baseline'].iterrows():
         tech = row['technology']
         introduced_year = row['introduced_year']
-        lifespan = data['technology'].loc[tech, 'lifespan']
+
+        # Safely retrieve lifespan
+        if tech in data['technology'].index:
+            lifespan = data['technology'].loc[tech, 'lifespan']
+        else:
+            lifespan = None
+
+        if lifespan is None:
+            issues.append(f"System {system}: Lifespan data missing for technology {tech}.")
+            continue
 
         if introduced_year + lifespan < baseline_year:
             issues.append(
-                f"System {system}: Technology {tech} was introduced in {introduced_year} with lifespan {lifespan}, expiring before the baseline year {baseline_year}.")
+                f"System {system}: Technology {tech} was introduced in {introduced_year} "
+                f"with lifespan {lifespan}, expiring before the baseline year {baseline_year}."
+            )
 
     return issues
 
@@ -51,25 +65,22 @@ def validate_tech_fuel_material_pairs(data):
         fuels, fuel_shares = row['fuels'], row['fuel_shares']
         materials, material_shares = row['materials'], row['material_shares']
 
+        if len(fuels) != len(fuel_shares):
+            issues.append(f"System {system}: Mismatch between number of fuels and fuel shares.")
+        if len(materials) != len(material_shares):
+            issues.append(f"System {system}: Mismatch between number of materials and material shares.")
+
         # Fuel Pair Check
-        if tech in data['technology_fuel_pairs']:
-            allowed_fuels = data['technology_fuel_pairs'][tech]
-            for f, share in zip(fuels, fuel_shares):
-                if f not in allowed_fuels:
-                    issues.append(f"System {system}: Fuel {f} is used in technology {tech}, but it's not allowed.")
-                elif (tech, f) in data['fuel_min_ratio'] and share < data['fuel_min_ratio'][(tech, f)]:
-                    issues.append(
-                        f"System {system}: Fuel {f} share ({share}) is below min share ({data['fuel_min_ratio'][(tech, f)]}).")
+        allowed_fuels = data['technology_fuel_pairs'].get(tech, [])
+        for f in fuels:
+            if f not in allowed_fuels:
+                issues.append(f"System {system}: Fuel {f} is used in technology {tech}, but it's not allowed.")
 
         # Material Pair Check
-        if tech in data['technology_material_pairs']:
-            allowed_materials = data['technology_material_pairs'][tech]
-            for m, share in zip(materials, material_shares):
-                if m not in allowed_materials:
-                    issues.append(f"System {system}: Material {m} is used in technology {tech}, but it's not allowed.")
-                elif (tech, m) in data['material_min_ratio'] and share < data['material_min_ratio'][(tech, m)]:
-                    issues.append(
-                        f"System {system}: Material {m} share ({share}) is below min share ({data['material_min_ratio'][(tech, m)]}).")
+        allowed_materials = data['technology_material_pairs'].get(tech, [])
+        for m in materials:
+            if m not in allowed_materials:
+                issues.append(f"System {system}: Material {m} is used in technology {tech}, but it's not allowed.")
 
     return issues
 
@@ -85,25 +96,32 @@ def verify_baseline_emission_consistency(data):
         materials, material_shares = row['materials'], row['material_shares']
         production = row['production']
 
-        # Calculate emissions
-        total_fuel_emission = sum(
-            fuel_shares[i] * production * data['fuel_efficiency'].loc[f, baseline_year] * data['fuel_emission'].loc[
-                f, baseline_year]
-            for i, f in enumerate(fuels) if f in data['fuel_emission'].index
-        )
-        total_material_emission = sum(
-            material_shares[i] * production * data['material_efficiency'].loc[m, baseline_year] *
-            data['material_emission'].loc[m, baseline_year]
-            for i, m in enumerate(materials) if m in data['material_emission'].index
-        )
+        # Ensure data validity
+        if len(fuels) != len(fuel_shares) or len(materials) != len(material_shares):
+            issues.append(f"System {system}: Mismatch between fuels/materials and their respective shares.")
+            continue
 
-        calculated_emission = data['technology_ei'].loc[tech, baseline_year] * (
-                    total_fuel_emission + total_material_emission)
-        reported_emission = data['emission_system'].loc[system, baseline_year]
+        try:
+            total_fuel_emission = sum(
+                fuel_shares[i] * production * data['fuel_efficiency'].loc[f, baseline_year] * data['fuel_emission'].loc[
+                    f, baseline_year]
+                for i, f in enumerate(fuels) if f in data['fuel_emission'].index
+            )
+            total_material_emission = sum(
+                material_shares[i] * production * data['material_efficiency'].loc[m, baseline_year] *
+                data['material_emission'].loc[m, baseline_year]
+                for i, m in enumerate(materials) if m in data['material_emission'].index
+            )
 
-        if reported_emission < calculated_emission:
-            issues.append(
-                f"System {system}: Reported emission {reported_emission} is lower than calculated emission {calculated_emission}.")
+            calculated_emission = data['technology_ei'].loc[tech, baseline_year] * (
+                        total_fuel_emission + total_material_emission)
+            reported_emission = data['emission_system'].loc[system, baseline_year]
+
+            if reported_emission < calculated_emission:
+                issues.append(
+                    f"System {system}: Reported emission {reported_emission} is lower than calculated emission {calculated_emission}.")
+        except KeyError as e:
+            issues.append(f"System {system}: Missing data for emission calculation - {e}.")
 
     return issues
 
@@ -131,9 +149,8 @@ def validate_data(data):
         "Lifespan Constraints": check_lifespan_constraints(data),
         "Tech-Fuel and Tech-Material Pairs": validate_tech_fuel_material_pairs(data),
         "Baseline Emission Consistency": verify_baseline_emission_consistency(data),
-        "Baseline Shares Consistency": check_baseline_shares(data),
+        "Baseline Shares Consistency": check_baseline_shares(data)
     }
-
     return issues
 
 

@@ -50,12 +50,14 @@ def load_data(file_path):
     data['technology_fuel_pairs'] = technology_fuel_pairs_df.groupby('technology')['fuel'].apply(list).to_dict()
     data['fuel_max_ratio'] = technology_fuel_pairs_df.set_index(['technology', 'fuel'])['max'].to_dict()
     data['fuel_min_ratio'] = technology_fuel_pairs_df.set_index(['technology', 'fuel'])['min'].to_dict()
+    data['fuel_efficiency_factor'] = technology_fuel_pairs_df.set_index(['technology', 'fuel'])['efficiency_factor'].to_dict()
 
     # Import and group Technology-Material Pairs
     technology_material_pairs_df = pd.read_excel(file_path, sheet_name='technology_material_pairs')
     data['technology_material_pairs'] = technology_material_pairs_df.groupby('technology')['material'].apply(list).to_dict()
     data['material_max_ratio'] = technology_material_pairs_df.set_index(['technology', 'material'])['max'].to_dict()
     data['material_min_ratio'] = technology_material_pairs_df.set_index(['technology', 'material'])['min'].to_dict()
+    data['material_efficiency_factor'] = technology_material_pairs_df.set_index(['technology', 'material'])['efficiency_factor'].to_dict()
 
     data['technology_introduction'] = pd.read_excel(file_path, sheet_name='technology', index_col=0)['introduction'].to_dict()
 

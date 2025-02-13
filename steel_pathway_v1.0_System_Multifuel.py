@@ -147,6 +147,6 @@ def main(**kwargs):
 
 if __name__ == "__main__":
     main(carboprice_include=False,
-         max_renew = 2,
+         max_renew = 10,
          allow_replace_same_technology = False)
     # soft lifespan does not work well
