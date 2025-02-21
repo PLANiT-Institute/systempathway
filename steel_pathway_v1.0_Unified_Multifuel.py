@@ -265,5 +265,5 @@ def main(**kwargs):
 if __name__ == "__main__":
 
     output = main(carboprice_include=False,
-         max_renew = 1,
+         max_renew = 10,
          allow_replace_same_technology = False)
