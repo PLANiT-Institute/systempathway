@@ -231,20 +231,23 @@ def main(**kwargs):
         })
 
     # Create a DataFrame for the annual summary
+    # Create a DataFrame for the annual summary
     annual_summary_df = pd.DataFrame(annual_summary).set_index("Year")
-    # annual_summary_df.to_excel("model_results.xlsx")
     print(annual_summary_df)
-
-    # Optionally, export the annual summary to Excel or another format
 
     # --------------------------
     # 14. Export Results to Excel
     # --------------------------
-    # export_results_to_excel(model, annual_global_capex, annual_global_renewal_cost, annual_global_opex, annual_global_total_emissions)
+    # export_results_to_excel(model, annual_global_capex, annual_global_renewal_cost, annual_global_opex,
+    #                         annual_global_total_emissions)
     # print("\n=== Results have been exported to 'model_results.xlsx' ===\n")
+
+
+
 
 if __name__ == "__main__":
 
     main(carboprice_include=False,
          max_renew = 1,
          allow_replace_same_technology = False)
+
