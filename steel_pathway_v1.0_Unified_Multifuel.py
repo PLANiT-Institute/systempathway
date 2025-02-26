@@ -15,7 +15,7 @@ importlib.reload(_oa)
 
 def main(**kwargs):
     carbonprice_include = kwargs.get('carboprice_include', False)
-    max_renew = kwargs.get('max_renew', 100)
+    max_renew = kwargs.get('max_renew', 10)
     allow_replace_same_technology = kwargs.get('allow_replace_same_technology', False)
 
     # Load Data
@@ -52,8 +52,11 @@ def main(**kwargs):
     annual_global_renewal_cost = {yr: 0.0 for yr in model.years}
     annual_global_opex = {yr: 0.0 for yr in model.years}
     annual_global_total_emissions = {yr: 0.0 for yr in model.years}
+    annual_global_fuel_consumption = {yr: {fuel: 0.0 for fuel in model.fuels} for yr in model.years}
+    annual_global_material_consumption = {yr: {mat: 0.0 for mat in model.materials} for yr in model.years}
+    annual_global_tech_adoption = {yr: {tech: 0 for tech in model.technologies} for yr in model.years}
 
-    # Collect Results
+    # Collect Results (Facility Level)
     for sys in model.systems:
         print(f"\n=== Results for Furnace Site: {sys} ===\n")
         yearly_metrics = []
@@ -97,18 +100,24 @@ def main(**kwargs):
             fuel_consumption_table.append({"Year": yr, **fuel_consumption})
             material_consumption_table.append({"Year": yr, **material_consumption})
             for tech in model.technologies:
+                active = value(model.active_technology[sys, tech, yr])
                 technology_statuses.append({
                     "Year": yr, "Technology": tech,
                     "Continue": value(model.continue_technology[sys, tech, yr]),
                     "Replace": value(model.replace[sys, tech, yr]),
                     "Renew": value(model.renew[sys, tech, yr]),
-                    "Active": value(model.active_technology[sys, tech, yr])
+                    "Active": active
                 })
+                annual_global_tech_adoption[yr][tech] += active  # Sum tech adoption
 
             annual_global_capex[yr] += capex_cost
             annual_global_renewal_cost[yr] += renewal_cost
             annual_global_opex[yr] += opex_cost
             annual_global_total_emissions[yr] += total_emissions
+            for fuel in model.fuels:
+                annual_global_fuel_consumption[yr][fuel] += fuel_consumption[fuel]
+            for mat in model.materials:
+                annual_global_material_consumption[yr][mat] += material_consumption[mat]
 
         costs_df = pd.DataFrame(yearly_metrics).set_index("Year")
         print("=== Costs and Emissions by Year ===")
@@ -124,34 +133,28 @@ def main(**kwargs):
 
         technology_df = pd.DataFrame(technology_statuses)
         technology_df_filtered = technology_df[
-            technology_df[['Active', 'Continue', 'Replace', 'Renew']].sum(axis=1) >= 1
-            ]
+            technology_df[['Active', 'Continue', 'Replace', 'Renew']].sum(axis=1) >= 1]
         technology_df_filtered.set_index(['Year', 'Technology'], inplace=True)
         desired_columns = ['Continue', 'Replace', 'Renew', 'Active']
         technology_df_filtered = technology_df_filtered[desired_columns]
         print("\n=== Technology Statuses ===\n")
         print(technology_df_filtered)
 
-    # Display Annual Global Metrics
-    print("\n=== Annual Global Total Costs, Emissions, Fuel and Material Consumption ===")
+    # Display Annual Global Metrics (Enhanced)
+    print("\n=== Annual Global Total Costs, Emissions, Fuel, Material Consumption, and Technology Adoption ===")
     annual_summary = []
-    annual_global_fuel_consumption = {yr: {fuel: 0.0 for fuel in model.fuels} for yr in model.years}
-    annual_global_material_consumption = {yr: {mat: 0.0 for mat in model.materials} for yr in model.years}
-
     for yr in sorted(model.years):
         total_cost = annual_global_capex[yr] + annual_global_renewal_cost[yr] + annual_global_opex[yr]
-        for sys in model.systems:
-            for fuel in model.fuels:
-                annual_global_fuel_consumption[yr][fuel] += value(model.fuel_consumption[sys, fuel, yr])
-            for mat in model.materials:
-                annual_global_material_consumption[yr][mat] += value(model.material_consumption[sys, mat, yr])
-
         annual_summary.append({
-            "Year": yr, "Total CAPEX": annual_global_capex[yr], "Total Renewal Cost": annual_global_renewal_cost[yr],
-            "Total OPEX": annual_global_opex[yr], "Total Cost": total_cost,
+            "Year": yr,
+            "Total CAPEX": annual_global_capex[yr],
+            "Total Renewal Cost": annual_global_renewal_cost[yr],
+            "Total OPEX": annual_global_opex[yr],
+            "Total Cost": total_cost,
             "Total Emissions": annual_global_total_emissions[yr],
             **{f"Fuel Consumption ({fuel})": annual_global_fuel_consumption[yr][fuel] for fuel in model.fuels},
             **{f"Material Consumption ({mat})": annual_global_material_consumption[yr][mat] for mat in model.materials},
+            **{f"Tech Adoption ({tech})": annual_global_tech_adoption[yr][tech] for tech in model.technologies},
         })
 
     annual_summary_df = pd.DataFrame(annual_summary).set_index("Year")
@@ -161,6 +164,8 @@ def main(**kwargs):
     try:
         _oa.export_results_enhanced(model, annual_global_capex, annual_global_renewal_cost,
                                     annual_global_opex, annual_global_total_emissions,
+                                    annual_global_fuel_consumption, annual_global_material_consumption,
+                                    annual_global_tech_adoption,
                                     output_dir='optimization_results',
                                     filename_base='steel_decarbonization_results',
                                     export_csv=True)

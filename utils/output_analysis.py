@@ -5,6 +5,8 @@ import pandas as pd
 
 def export_results_enhanced(model, annual_global_capex, annual_global_renewal_cost,
                             annual_global_opex, annual_global_total_emissions,
+                            annual_global_fuel_consumption, annual_global_material_consumption,
+                            annual_global_tech_adoption,
                             output_dir='results', filename_base='model_results',
                             export_csv=True):
     if not os.path.exists(output_dir):
@@ -59,11 +61,15 @@ def export_results_enhanced(model, annual_global_capex, annual_global_renewal_co
             pd.DataFrame(material_consumption_table).set_index("Year").to_excel(writer, sheet_name=f'{short_sys}_Mat')
             pd.DataFrame(technology_statuses).to_excel(writer, sheet_name=f'{short_sys}_Tech', index=False)
 
+        # Global Summary (Enhanced)
         annual_summary = [
             {"Year": yr, "Total CAPEX": annual_global_capex[yr], "Total Renewal Cost": annual_global_renewal_cost[yr],
              "Total OPEX": annual_global_opex[yr],
              "Total Cost": (annual_global_capex[yr] + annual_global_renewal_cost[yr] + annual_global_opex[yr]),
-             "Total Emissions": annual_global_total_emissions[yr]}
+             "Total Emissions": annual_global_total_emissions[yr],
+             **{f"Fuel Consumption ({fuel})": annual_global_fuel_consumption[yr][fuel] for fuel in model.fuels},
+             **{f"Material Consumption ({mat})": annual_global_material_consumption[yr][mat] for mat in model.materials},
+             **{f"Tech Adoption ({tech})": annual_global_tech_adoption[yr][tech] for tech in model.technologies}}
             for yr in sorted(model.years)
         ]
         pd.DataFrame(annual_summary).set_index("Year").to_excel(writer, sheet_name='Global_Summary')
