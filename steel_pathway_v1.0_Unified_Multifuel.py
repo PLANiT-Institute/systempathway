@@ -61,7 +61,7 @@ def main(file_path, **kwargs):
     return "Work"
 
 if __name__ == "__main__":
-    file_path = 'database/stage_data_v0.1.xlsx'
+    file_path = 'database/steel_data.xlsx'
     output = main(file_path,
                   carboprice_include=False,
                   max_renew = 10,
