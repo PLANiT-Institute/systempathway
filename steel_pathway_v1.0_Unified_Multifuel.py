@@ -117,6 +117,7 @@ def main(**kwargs):
                 value(model.emission_by_tech[sys, tech, yr]) for tech in model.technologies
             )
 
+
             # Calculate Fuel Consumption
             fuel_consumption = {
                 fuel: value(model.fuel_consumption[sys, fuel, yr]) for fuel in model.fuels
@@ -127,15 +128,20 @@ def main(**kwargs):
                 mat: value(model.material_consumption[sys, mat, yr]) for mat in model.materials
             }
 
+            # Get Production Data for the System
+            production_value = value(model.production[sys, yr])
+
             # Collect Yearly Metrics
             yearly_metrics.append({
                 "Year": yr,
+                "System": sys,  # Include system name for clarity
+                "Production": production_value,  # Add production data
                 "CAPEX": capex_cost,
                 "Renewal Cost": renewal_cost,
                 "OPEX": opex_cost,
-                "Total Emissions": total_emissions
+                "Total Emissions": total_emissions,
+                "Production": production_value
             })
-
             # Collect Fuel Consumption Data
             fuel_consumption_table.append({"Year": yr, **fuel_consumption})
 
@@ -226,7 +232,6 @@ def main(**kwargs):
     annual_global_fuel_consumption = {yr: {fuel: 0.0 for fuel in model.fuels} for yr in model.years}
     annual_global_material_consumption = {yr: {mat: 0.0 for mat in model.materials} for yr in model.years}
 
-    # Aggregate data
     for yr in sorted(model.years):
         total_cost = annual_global_capex[yr] + annual_global_renewal_cost[yr] + annual_global_opex[yr]
 
@@ -237,6 +242,9 @@ def main(**kwargs):
             for mat in model.materials:
                 annual_global_material_consumption[yr][mat] += value(model.material_consumption[sys, mat, yr])
 
+        # Collect production for each system
+        system_production = {f"Production ({sys})": value(model.production[sys, yr]) for sys in model.systems}
+
         annual_summary.append({
             "Year": yr,
             "Total CAPEX": annual_global_capex[yr],
@@ -244,14 +252,42 @@ def main(**kwargs):
             "Total OPEX": annual_global_opex[yr],
             "Total Cost": total_cost,
             "Total Emissions": annual_global_total_emissions[yr],
-            **{f"Fuel Consumption ({fuel})": annual_global_fuel_consumption[yr][fuel] for fuel in model.fuels},
-            **{f"Material Consumption ({mat})": annual_global_material_consumption[yr][mat] for mat in model.materials},
+            # **{f"Fuel Consumption ({fuel})": annual_global_fuel_consumption[yr][fuel] for fuel in model.fuels},
+            # **{f"Material Consumption ({mat})": annual_global_material_consumption[yr][mat] for mat in model.materials},
+            # **system_production  # Add production data
         })
 
     # Create a DataFrame for the annual summary
     annual_summary_df = pd.DataFrame(annual_summary).set_index("Year")
     # annual_summary_df.to_excel("model_results.xlsx")
     print(annual_summary_df)
+
+
+    # print("\n=== Debugging Emission Calculation ===")
+    # for yr in model.years:
+    #     total_fuel = sum(value(model.fuel_consumption[sys, f, yr]) for sys in model.systems for f in model.fuels)
+    #     total_material = sum(
+    #         value(model.material_consumption[sys, mat, yr]) for sys in model.systems for mat in model.materials)
+    #     total_emission = sum(
+    #         value(model.emission_by_tech[sys, tech, yr]) for sys in model.systems for tech in model.technologies)
+    #
+    #     print(f"Year {yr}:")
+    #     print(f"  - Total Fuel Consumption: {total_fuel}")
+    #     print(f"  - Total Material Consumption: {total_material}")
+    #     print(f"  - Total Emissions: {total_emission}")
+    #
+    # for sys in model.systems:
+    #     for yr in model.years:
+    #         total_fuel = sum(value(model.fuel_consumption[sys, f, yr]) for f in model.fuels)
+    #         total_material = sum(value(model.material_consumption[sys, mat, yr]) for mat in model.materials)
+    #         print(f"Year {yr}, System {sys}, Total Fuel: {total_fuel}, Total Material: {total_material}")
+    #
+    # for sys in model.systems:
+    #     for tech in model.technologies:
+    #         for yr in model.years:
+    #             print(
+    #                 f"Year {yr}, System {sys}, Tech {tech}, Continue: {value(model.continue_technology[sys, tech, yr])}")
+    #
 
     return annual_summary_df
     # Optionally, export the annual summary to Excel or another format

@@ -96,30 +96,6 @@ def build_model_for_system(system_name, baseline_row, data, **kwargs):
     model.total_material_consumption = Var(model.years, within=NonNegativeReals)
 
     """
-    Emission Constraints
-    """
-
-    def emission_by_tech_rule(m, tech, yr):
-        return m.emission_by_tech[tech, yr] ==(
-            m.technology_ei[tech, yr] * (
-                    sum(m.fuel_emission[f, yr] * m.fuel_consumption[f, yr] for f in m.fuels) +
-                    sum(m.material_emission[mat, yr] * m.material_consumption[mat, yr] for mat in m.materials)
-            )
-        )
-
-    model.emission_by_tech_constraint = Constraint(model.technologies, model.years, rule=emission_by_tech_rule)
-
-    # Total Emission Constraint per Year
-    def total_emission_limit_rule(m, yr):
-        return sum(
-            m.emission_by_tech[tech, yr] for tech in m.technologies
-        ) <= m.emission_limit[yr]
-
-    if carbonprice_include == False:
-        model.total_emission_limit_constraint = Constraint(model.years, rule=total_emission_limit_rule)
-
-
-    """
     First year rule
     """
     # Constraint: Ensure baseline technology is active and continued in the first year
@@ -643,25 +619,130 @@ def build_unified_model(data, **kwargs):
     # 4. Define Constraints
     # --------------------------
 
-    # 4.1. Emission Constraints
-    def emission_by_tech_rule(m, sys, tech, yr):
-        return m.emission_by_tech[sys, tech, yr] == (
-            m.technology_ei[tech, yr] * (
-                sum(m.fuel_emission[f, yr] * m.fuel_consumption[sys, f, yr] for f in m.fuels) +
-                sum(m.material_emission[mat, yr] * m.material_consumption[sys, mat, yr] for mat in m.materials)
-            )
+
+    """
+    Emission Constraints
+    """
+    # # 4.1. Emission Constraints
+
+    # Auxiliary variables to capture consumption only if the tech is active
+    model.active_fuel_consumption = Var(
+        model.systems, model.technologies, model.fuels, model.years,
+        domain=NonNegativeReals
+    )
+    model.active_material_consumption = Var(
+        model.systems, model.technologies, model.materials, model.years,
+        domain=NonNegativeReals
+    )
+
+    BIG_M = 1e15  # Adjust based on your data scale
+
+    # 1) If tech is active, let active_fuel_consumption track fuel_consumption
+    #    If tech is inactive, force it to be zero
+    def active_fuel_upper_rule(m, sys, tech, f, yr):
+        return m.active_fuel_consumption[sys, tech, f, yr] <= m.fuel_consumption[sys, f, yr]
+
+    model.active_fuel_upper_constraint = Constraint(
+        model.systems, model.technologies, model.fuels, model.years,
+        rule=active_fuel_upper_rule
+    )
+
+    def active_fuel_tech_rule(m, sys, tech, f, yr):
+        return m.active_fuel_consumption[sys, tech, f, yr] <= BIG_M * m.active_technology[sys, tech, yr]
+
+    model.active_fuel_tech_constraint = Constraint(
+        model.systems, model.technologies, model.fuels, model.years,
+        rule=active_fuel_tech_rule
+    )
+
+    # (Optional) Lower bound so that if tech is active, active_fuel_consumption ≈ fuel_consumption
+    def active_fuel_lower_rule(m, sys, tech, f, yr):
+        return m.active_fuel_consumption[sys, tech, f, yr] >= (
+                m.fuel_consumption[sys, f, yr] - BIG_M * (1 - m.active_technology[sys, tech, yr])
         )
 
-    model.emission_by_tech_constraint = Constraint(model.systems, model.technologies, model.years,
-                                                   rule=emission_by_tech_rule)
+    model.active_fuel_lower_constraint = Constraint(
+        model.systems, model.technologies, model.fuels, model.years,
+        rule=active_fuel_lower_rule
+    )
+
+    # Similarly for materials:
+    def active_material_upper_rule(m, sys, tech, mat, yr):
+        return m.active_material_consumption[sys, tech, mat, yr] <= m.material_consumption[sys, mat, yr]
+
+    model.active_material_upper_constraint = Constraint(
+        model.systems, model.technologies, model.materials, model.years,
+        rule=active_material_upper_rule
+    )
+
+    def active_material_tech_rule(m, sys, tech, mat, yr):
+        return m.active_material_consumption[sys, tech, mat, yr] <= BIG_M * m.active_technology[sys, tech, yr]
+
+    model.active_material_tech_constraint = Constraint(
+        model.systems, model.technologies, model.materials, model.years,
+        rule=active_material_tech_rule
+    )
+
+    def active_material_lower_rule(m, sys, tech, mat, yr):
+        return m.active_material_consumption[sys, tech, mat, yr] >= (
+                m.material_consumption[sys, mat, yr] - BIG_M * (1 - m.active_technology[sys, tech, yr])
+        )
+
+    model.active_material_lower_constraint = Constraint(
+        model.systems, model.technologies, model.materials, model.years,
+        rule=active_material_lower_rule
+    )
+
+    def emission_by_tech_rule(m, sys, tech, yr):
+        return m.emission_by_tech[sys, tech, yr] == (
+                m.technology_ei[tech, yr] * (
+                sum(m.fuel_emission[f, yr] * m.active_fuel_consumption[sys, tech, f, yr] for f in m.fuels) +
+                sum(m.material_emission[mat, yr] * m.active_material_consumption[sys, tech, mat, yr] for mat in
+                    m.materials)
+        )
+        )
+
+    model.emission_by_tech_constraint = Constraint(
+        model.systems, model.technologies, model.years,
+        rule=emission_by_tech_rule
+    )
 
     def emission_limit_rule(m, yr):
         return sum(
-            m.emission_by_tech[sys, tech, yr] for sys in m.systems for tech in m.technologies) <= \
-            m.emission_limit[yr]
+            m.emission_by_tech[sys, tech, yr]
+            for sys in m.systems
+            for tech in m.technologies
+        ) <= m.emission_limit[yr]
 
-    if carbonprice_include == False:
-        model.emission_limit_constraint = Constraint(model.years, rule=emission_limit_rule)
+    if not carbonprice_include:
+        model.emission_limit_constraint = Constraint(
+            model.years, rule=emission_limit_rule
+        )
+
+    # def emission_by_tech_rule(m, sys, tech, yr):
+    #     # if yr == min(m.years):
+    #     #     return Constraint.Skip
+    #     # else:
+    #     return m.emission_by_tech[sys, tech, yr] == (
+    #         m.technology_ei[tech, yr] * (
+    #             sum(m.fuel_emission[f, yr] * m.fuel_consumption[sys, f, yr] for f in m.fuels) +
+    #             sum(m.material_emission[mat, yr] * m.material_consumption[sys, mat, yr] for mat in m.materials)
+    #         )
+    #     )
+    #
+    # model.emission_by_tech_constraint = Constraint(model.systems, model.technologies, model.years,
+    #                                                rule=emission_by_tech_rule)
+    #
+    # def emission_limit_rule(m, yr):
+    #     # if yr == min(m.years):
+    #     #     return Constraint.Skip
+    #     # else:
+    #     return sum(
+    #         m.emission_by_tech[sys, tech, yr] for sys in m.systems for tech in m.technologies) <= \
+    #         m.emission_limit[yr]
+    #
+    # if carbonprice_include == False:
+    #     model.emission_limit_constraint = Constraint(model.years, rule=emission_limit_rule)
 
     def technology_activation_rule(m, sys, yr):
         return sum(m.active_technology[sys, tech, yr] for tech in m.technologies) == 1
