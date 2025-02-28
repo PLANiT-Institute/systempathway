@@ -76,4 +76,13 @@ def build_parameters(model, data, **kwargs):
         domain=NonNegativeReals
     )
 
+    # Suppose 'model.years' is a list or set of integer years in ascending order.
+    model.active_if_started = Var(
+        model.systems,
+        model.technologies,
+        model.years,  # possible start year 's'
+        model.years,  # actual operating year 't'
+        domain=Binary
+    )
+
     return model

@@ -273,6 +273,84 @@ def fuel_constraints(model, data):
         model.systems, model.technologies, model.fuels, model.years, rule=fuel_min_share_constraint_rule
     )
 
+    return model
+
+def feedstock_constraints(model, data):
+
+    # 4.6. Material Constraints
+    M_mat = max(model.production_param.values()) * max(model.material_eff_param.values())  # Adjust based on the problem scale
+
+    # 4.6.0. Material Production Constraint
+    def material_production_constraint_rule(m, sys, yr):
+        return m.production[sys, yr] == sum(
+            m.material_consumption[sys, mat, yr] / m.material_eff_param[mat, yr] for mat in m.materials
+        )
+
+    model.material_production_constraint = Constraint(model.systems, model.years,
+                                                      rule=material_production_constraint_rule)
+
+    def material_selection_rule(m, sys, yr):
+        return sum(m.material_select[sys, mat, yr] for mat in m.materials) >= 1
+
+    model.material_selection_constraint = Constraint(model.systems, model.years, rule=material_selection_rule)
+
+    # 1. Total Material Consumption for Each System
+    def total_material_consumption_rule(m, sys, yr):
+        # Total material consumption per system for each year
+        return m.total_material_consumption[sys, yr] == sum(
+            m.material_consumption[sys, mat, yr] for mat in m.materials
+        )
+
+    model.total_material_consumption_constraint = Constraint(
+        model.systems, model.years, rule=total_material_consumption_rule
+    )
+
+    # 5. Maximum Material Share Constraint
+    def material_max_share_constraint_rule(m, sys, tech, mat, yr):
+        if yr > min(m.years):
+
+            # Get the maximum allowable share for the (technology, material) combination
+            max_share = data['material_max_ratio'].get((tech, mat), 0)
+            return m.material_consumption[sys, mat, yr] <= (
+                    max_share * m.total_material_consumption[sys, yr] + M_mat * (1 - m.active_technology[sys, tech, yr])
+            )
+        else:
+            return Constraint.Skip
+
+    model.material_max_share_constraint = Constraint(
+        model.systems, model.technologies, model.materials, model.years, rule=material_max_share_constraint_rule
+    )
+
+    def material_min_share_constraint_rule(m, sys, tech, mat, yr):
+        # Pull the introduction year from your data
+        introduction_year = data['material_introduction'].loc[mat]
+
+        # For years before introduction, force zero consumption
+        if yr < introduction_year:
+            return m.material_consumption[sys, mat, yr] == 0
+
+        # For introduced materials, apply the min-share logic
+        min_share = data['material_min_ratio'].get((tech, mat), 0)
+
+        # M_mat is your chosen "big M" for materials; you already define it above.
+        # The constraint says: if technology (sys, tech) is active,
+        # material_consumption >= min_share * total_material_consumption
+        # Otherwise, it can be relaxed by up to M_mat if the tech is not active.
+        return m.material_consumption[sys, mat, yr] >= (
+                min_share * m.total_material_consumption[sys, yr]
+                - M_mat * (1 - m.active_technology[sys, tech, yr])
+        )
+
+    model.material_min_share_constraint = Constraint(
+        model.systems, model.technologies, model.materials, model.years,
+        rule=material_min_share_constraint_rule
+    )
+
+    return model
+
+def active_technology_constraints(model):
+
+    M_fuel = max(model.production_param.values()) * max(model.fuel_eff_param.values())  # Adjust based on the problem scale
 
     # 4.7.1. prod_active = production * active_technology
     def prod_active_limit_rule(m, sys, tech, yr):
@@ -349,80 +427,6 @@ def fuel_constraints(model, data):
         rule=renew_prod_active_lower_rule
     )
 
-
-    return model
-
-def feedstock_constraints(model, data):
-
-    # 4.6. Material Constraints
-    M_mat = max(model.production_param.values()) * max(model.material_eff_param.values())  # Adjust based on the problem scale
-
-    # 4.6.0. Material Production Constraint
-    def material_production_constraint_rule(m, sys, yr):
-        return m.production[sys, yr] == sum(
-            m.material_consumption[sys, mat, yr] / m.material_eff_param[mat, yr] for mat in m.materials
-        )
-
-    model.material_production_constraint = Constraint(model.systems, model.years,
-                                                      rule=material_production_constraint_rule)
-
-    def material_selection_rule(m, sys, yr):
-        return sum(m.material_select[sys, mat, yr] for mat in m.materials) >= 1
-
-    model.material_selection_constraint = Constraint(model.systems, model.years, rule=material_selection_rule)
-
-    # 1. Total Material Consumption for Each System
-    def total_material_consumption_rule(m, sys, yr):
-        # Total material consumption per system for each year
-        return m.total_material_consumption[sys, yr] == sum(
-            m.material_consumption[sys, mat, yr] for mat in m.materials
-        )
-
-    model.total_material_consumption_constraint = Constraint(
-        model.systems, model.years, rule=total_material_consumption_rule
-    )
-
-    # 5. Maximum Material Share Constraint
-    def material_max_share_constraint_rule(m, sys, tech, mat, yr):
-        if yr > min(m.years):
-
-            # Get the maximum allowable share for the (technology, material) combination
-            max_share = data['material_max_ratio'].get((tech, mat), 0)
-            return m.material_consumption[sys, mat, yr] <= (
-                    max_share * m.total_material_consumption[sys, yr] + M_mat * (1 - m.active_technology[sys, tech, yr])
-            )
-        else:
-            return Constraint.Skip
-
-    model.material_max_share_constraint = Constraint(
-        model.systems, model.technologies, model.materials, model.years, rule=material_max_share_constraint_rule
-    )
-
-    def material_min_share_constraint_rule(m, sys, tech, mat, yr):
-        # Pull the introduction year from your data
-        introduction_year = data['material_introduction'].loc[mat]
-
-        # For years before introduction, force zero consumption
-        if yr < introduction_year:
-            return m.material_consumption[sys, mat, yr] == 0
-
-        # For introduced materials, apply the min-share logic
-        min_share = data['material_min_ratio'].get((tech, mat), 0)
-
-        # M_mat is your chosen "big M" for materials; you already define it above.
-        # The constraint says: if technology (sys, tech) is active,
-        # material_consumption >= min_share * total_material_consumption
-        # Otherwise, it can be relaxed by up to M_mat if the tech is not active.
-        return m.material_consumption[sys, mat, yr] >= (
-                min_share * m.total_material_consumption[sys, yr]
-                - M_mat * (1 - m.active_technology[sys, tech, yr])
-        )
-
-    model.material_min_share_constraint = Constraint(
-        model.systems, model.technologies, model.materials, model.years,
-        rule=material_min_share_constraint_rule
-    )
-
     return model
 
 def other_constraints(model, **kwargs):
@@ -480,28 +484,6 @@ def other_constraints(model, **kwargs):
         model.systems, model.technologies, model.years, rule=enforce_replace_on_activation_rule
     )
 
-    def enforce_replacement_or_renewal_years_rule(m, sys, tech, yr):
-        introduced_year = m.introduced_year_param[sys]
-        lifespan = m.lifespan_param[tech]
-        if yr > introduced_year and (yr - introduced_year) % lifespan != 0:
-            return m.replace[sys, tech, yr] + m.renew[sys, tech, yr] == 0
-        return Constraint.Skip
-
-    model.enforce_replacement_or_renewal_years_constraint = Constraint(
-        model.systems, model.technologies, model.years, rule=enforce_replacement_or_renewal_years_rule
-    )
-
-    def enforce_no_continuation_in_replacement_years_rule(m, sys, tech, yr):
-        introduced_year = m.introduced_year_param[sys]
-        lifespan = m.lifespan_param[tech]
-        if yr > introduced_year and (yr - introduced_year) % lifespan == 0:
-            return m.continue_technology[sys, tech, yr] == 0
-        return Constraint.Skip
-
-    model.enforce_no_continuation_in_replacement_years_constraint = Constraint(
-        model.systems, model.technologies, model.years, rule=enforce_no_continuation_in_replacement_years_rule
-    )
-
     # 4.4. Exclusivity Constraints
     def exclusivity_rule(m, sys, tech, yr):
         # Only one of continue, replace, or renew can be 1
@@ -541,5 +523,122 @@ def other_constraints(model, **kwargs):
         return m.production[sys, yr] >= m.production_param[sys]
 
     model.minimum_production_constraint = Constraint(model.systems, model.years, rule=minimum_production_rule)
+
+    return model
+
+def lifespan_constraints(model):
+    def enforce_replacement_or_renewal_years_rule(m, sys, tech, yr):
+        introduced_year = m.introduced_year_param[sys]
+        lifespan = m.lifespan_param[tech]
+        if yr > introduced_year and (yr - introduced_year) % lifespan != 0:
+            return m.replace[sys, tech, yr] + m.renew[sys, tech, yr] == 0
+        return Constraint.Skip
+
+    model.enforce_replacement_or_renewal_years_constraint = Constraint(
+        model.systems, model.technologies, model.years, rule=enforce_replacement_or_renewal_years_rule
+    )
+
+    def enforce_no_continuation_in_replacement_years_rule(m, sys, tech, yr):
+        introduced_year = m.introduced_year_param[sys]
+        lifespan = m.lifespan_param[tech]
+        if yr > introduced_year and (yr - introduced_year) % lifespan == 0:
+            return m.continue_technology[sys, tech, yr] == 0
+        return Constraint.Skip
+
+    model.enforce_no_continuation_in_replacement_years_constraint = Constraint(
+        model.systems, model.technologies, model.years, rule=enforce_no_continuation_in_replacement_years_rule
+    )
+
+    # def no_activity_before_start_rule(m, sys, tech, s, t):
+    #     # If t < s, can't be active yet
+    #     if t < s:
+    #         return m.active_if_started[sys, tech, s, t] == 0
+    #     return Constraint.Skip
+    #
+    # model.no_activity_before_start_constraint = Constraint(
+    #     model.systems, model.technologies, model.years, model.years,
+    #     rule=no_activity_before_start_rule
+    # )
+    #
+    # def no_exceed_lifespan_rule(m, sys, tech, s, t):
+    #     lifespan = m.lifespan_param[tech]
+    #     # If t - s >= lifespan, we must be 0 (cannot be active from that start)
+    #     if (t - s) >= lifespan:
+    #         return m.active_if_started[sys, tech, s, t] == 0
+    #     return Constraint.Skip
+    #
+    # model.no_exceed_lifespan_constraint = Constraint(
+    #     model.systems, model.technologies, model.years, model.years,
+    #     rule=no_exceed_lifespan_rule
+    # )
+    #
+    # def link_active_technology_rule(m, sys, tech, t):
+    #     return (
+    #             m.active_technology[sys, tech, t]
+    #             ==
+    #             sum(m.active_if_started[sys, tech, s, t] for s in m.years if s <= t)
+    #     )
+    #
+    # model.link_active_technology_constraint = Constraint(
+    #     model.systems, model.technologies, model.years,
+    #     rule=link_active_technology_rule
+    # )
+    #
+    # def carry_forward_rule(m, sys, tech, s, t):
+    #     # If t is the last year, skip
+    #     if t == max(m.years):
+    #         return Constraint.Skip
+    #     # If we are active at year t from start s,
+    #     # we can remain active at t+1 from the same start
+    #     # only if we do not replace or renew
+    #     return (
+    #             m.active_if_started[sys, tech, s, t + 1]
+    #             <=
+    #             m.active_if_started[sys, tech, s, t]
+    #             - (m.replace[sys, tech, t + 1] + m.renew[sys, tech, t + 1])
+    #     )
+    #
+    # model.carry_forward_constraint = Constraint(
+    #     model.systems, model.technologies, model.years, model.years,
+    #     rule=carry_forward_rule
+    # )
+    #
+    # def new_start_if_replace_or_renew_rule(m, sys, tech, t):
+    #     # If we do 'replace' or 'renew' in year t+1,
+    #     # we can start a new path s = t+1
+    #     if t == max(m.years):
+    #         return Constraint.Skip
+    #     return (
+    #             m.active_if_started[sys, tech, t + 1, t + 1]
+    #             >=
+    #             m.replace[sys, tech, t + 1] + m.renew[sys, tech, t + 1]
+    #     )
+    #
+    # model.new_start_if_replace_or_renew_constraint = Constraint(
+    #     model.systems, model.technologies, model.years,
+    #     rule=new_start_if_replace_or_renew_rule
+    # )
+    #
+    # def must_replace_or_renew_at_end_rule(m, sys, tech, s, t):
+    #     lifespan = m.lifespan_param[tech]
+    #     # 1) Skip if t is the last year (or if t+1 not in m.years)
+    #     if t == max(m.years):  # or `if (t + 1) not in m.years:`
+    #         return Constraint.Skip
+    #
+    #     # 2) Now it's safe to use t+1
+    #     if (t + 1) - s == lifespan:
+    #         # Must do replace or renew in year t+1
+    #         return (
+    #                 m.replace[sys, tech, t + 1] + m.renew[sys, tech, t + 1]
+    #                 >=
+    #                 m.active_if_started[sys, tech, s, t]
+    #         )
+    #     else:
+    #         return Constraint.Skip
+    #
+    # model.must_replace_or_renew_at_end_constraint = Constraint(
+    #     model.systems, model.technologies, model.years, model.years,
+    #     rule=must_replace_or_renew_at_end_rule
+    # )
 
     return model
