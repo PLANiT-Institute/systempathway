@@ -35,39 +35,39 @@ def emission_constraints(model,**kwargs):
         rule=active_fuel_lower_rule
     )
 
-    # Similarly for materials:
-    def active_material_upper_rule(m, sys, tech, mat, yr):
-        return m.active_material_consumption[sys, tech, mat, yr] <= m.material_consumption[sys, mat, yr]
+    # Similarly for feedstocks:
+    def active_feedstock_upper_rule(m, sys, tech, fs, yr):
+        return m.active_feedstock_consumption[sys, tech, fs, yr] <= m.feedstock_consumption[sys, fs, yr]
 
-    model.active_material_upper_constraint = Constraint(
-        model.systems, model.technologies, model.materials, model.years,
-        rule=active_material_upper_rule
+    model.active_feedstock_upper_constraint = Constraint(
+        model.systems, model.technologies, model.feedstocks, model.years,
+        rule=active_feedstock_upper_rule
     )
 
-    def active_material_tech_rule(m, sys, tech, mat, yr):
-        return m.active_material_consumption[sys, tech, mat, yr] <= BIG_M * m.active_technology[sys, tech, yr]
+    def active_feedstock_tech_rule(m, sys, tech, fs, yr):
+        return m.active_feedstock_consumption[sys, tech, fs, yr] <= BIG_M * m.active_technology[sys, tech, yr]
 
-    model.active_material_tech_constraint = Constraint(
-        model.systems, model.technologies, model.materials, model.years,
-        rule=active_material_tech_rule
+    model.active_feedstock_tech_constraint = Constraint(
+        model.systems, model.technologies, model.feedstocks, model.years,
+        rule=active_feedstock_tech_rule
     )
 
-    def active_material_lower_rule(m, sys, tech, mat, yr):
-        return m.active_material_consumption[sys, tech, mat, yr] >= (
-                m.material_consumption[sys, mat, yr] - BIG_M * (1 - m.active_technology[sys, tech, yr])
+    def active_feedstock_lower_rule(m, sys, tech, fs, yr):
+        return m.active_feedstock_consumption[sys, tech, fs, yr] >= (
+                m.feedstock_consumption[sys, fs, yr] - BIG_M * (1 - m.active_technology[sys, tech, yr])
         )
 
-    model.active_material_lower_constraint = Constraint(
-        model.systems, model.technologies, model.materials, model.years,
-        rule=active_material_lower_rule
+    model.active_feedstock_lower_constraint = Constraint(
+        model.systems, model.technologies, model.feedstocks, model.years,
+        rule=active_feedstock_lower_rule
     )
 
     def emission_by_tech_rule(m, sys, tech, yr):
         return m.emission_by_tech[sys, tech, yr] == (
                 m.technology_ei[tech, yr] * (
                 sum(m.fuel_emission[f, yr] * m.active_fuel_consumption[sys, tech, f, yr] for f in m.fuels) +
-                sum(m.material_emission[mat, yr] * m.active_material_consumption[sys, tech, mat, yr] for mat in
-                    m.materials)
+                sum(m.feedstock_emission[fs, yr] * m.active_feedstock_consumption[sys, tech, fs, yr] for fs in
+                    m.feedstocks)
         )
         )
 
@@ -144,25 +144,25 @@ def baseline_constraints(model):
         model.systems, model.fuels, model.years, rule=hard_baseline_fuel_rule
     )
 
-    def hard_baseline_material_rule(m, sys, mat, yr):
+    def hard_baseline_feedstock_rule(m, sys, fs, yr):
         if yr == min(m.years):  # Baseline year
-            if mat in m.baseline_materials[sys]:
+            if fs in m.baseline_feedstocks[sys]:
                 # Ensure baseline fuels are selected
-                return m.material_select[sys, mat, yr] == 1
+                return m.feedstock_select[sys, fs, yr] == 1
             else:
                 # Ensure non-baseline fuels are not selected
-                return m.material_select[sys, mat, yr] == 0
+                return m.feedstock_select[sys, fs, yr] == 0
         return Constraint.Skip
 
 
-    model.hard_baseline_material_constraint = Constraint(
-        model.systems, model.materials, model.years,
-        rule=hard_baseline_material_rule
+    model.hard_baseline_feedstock_constraint = Constraint(
+        model.systems, model.feedstocks, model.years,
+        rule=hard_baseline_feedstock_rule
     )
 
     def baseline_fuel_share_rule(m, sys, fuel, yr):
             """Enforce that in the baseline year, each system's fuel consumption
-            matches baseline production × share × fuel efficiency."""
+            fsches baseline production × share × fuel intensity."""
 
             # Only apply in the baseline year(s); skip for other years if you have multiple
             if yr == min(m.years) and fuel in m.baseline_fuels[sys]:
@@ -182,30 +182,30 @@ def baseline_constraints(model):
         rule=baseline_fuel_share_rule
     )
 
-    def baseline_material_share_rule(m, sys, mat, yr):
-        """Enforce that in the baseline year, each system's material consumption
-        matches baseline production × material share × (optionally) material efficiency."""
+    def baseline_feedstock_share_rule(m, sys, fs, yr):
+        """Enforce that in the baseline year, each system's feedstock consumption
+        fsches baseline production × feedstock share × (optionally) feedstock intensity."""
 
         # Only apply in the baseline year(s); skip for others
-        if yr == min(m.years) and mat in m.baseline_materials[sys]:
-            # Find the correct index for this material
-            idx = m.baseline_materials[sys].index(mat)
+        if yr == min(m.years) and fs in m.baseline_feedstocks[sys]:
+            # Find the correct index for this feedstock
+            idx = m.baseline_feedstocks[sys].index(fs)
 
-            # If you do NOT have a separate 'material_eff_param', remove it from the formula
+            # If you do NOT have a separate 'feedstock_eff_param', remove it from the formula
             return (
-                    m.material_consumption[sys, mat, yr] ==
-                    m.baseline_material_shares[sys][idx]
+                    m.feedstock_consumption[sys, fs, yr] ==
+                    m.baseline_feedstock_shares[sys][idx]
                     * m.baseline_production[sys]
-                    * m.material_eff_param[mat, yr]
+                    * m.feedstock_eff_param[fs, yr]
             )
         else:
             return Constraint.Skip
 
-    model.baseline_material_share_constraint = Constraint(
+    model.baseline_feedstock_share_constraint = Constraint(
         model.systems,
-        model.materials,
+        model.feedstocks,
         model.years,
-        rule=baseline_material_share_rule
+        rule=baseline_feedstock_share_rule
     )
 
     return model
@@ -278,72 +278,72 @@ def fuel_constraints(model, data):
 def feedstock_constraints(model, data):
 
     # 4.6. Material Constraints
-    M_mat = max(model.production_param.values()) * max(model.material_eff_param.values())  # Adjust based on the problem scale
+    M_fs = max(model.production_param.values()) * max(model.feedstock_eff_param.values())  # Adjust based on the problem scale
 
     # 4.6.0. Material Production Constraint
-    def material_production_constraint_rule(m, sys, yr):
+    def feedstock_production_constraint_rule(m, sys, yr):
         return m.production[sys, yr] == sum(
-            m.material_consumption[sys, mat, yr] / m.material_eff_param[mat, yr] for mat in m.materials
+            m.feedstock_consumption[sys, fs, yr] / m.feedstock_eff_param[fs, yr] for fs in m.feedstocks
         )
 
-    model.material_production_constraint = Constraint(model.systems, model.years,
-                                                      rule=material_production_constraint_rule)
+    model.feedstock_production_constraint = Constraint(model.systems, model.years,
+                                                      rule=feedstock_production_constraint_rule)
 
-    def material_selection_rule(m, sys, yr):
-        return sum(m.material_select[sys, mat, yr] for mat in m.materials) >= 1
+    def feedstock_selection_rule(m, sys, yr):
+        return sum(m.feedstock_select[sys, fs, yr] for fs in m.feedstocks) >= 1
 
-    model.material_selection_constraint = Constraint(model.systems, model.years, rule=material_selection_rule)
+    model.feedstock_selection_constraint = Constraint(model.systems, model.years, rule=feedstock_selection_rule)
 
     # 1. Total Material Consumption for Each System
-    def total_material_consumption_rule(m, sys, yr):
-        # Total material consumption per system for each year
-        return m.total_material_consumption[sys, yr] == sum(
-            m.material_consumption[sys, mat, yr] for mat in m.materials
+    def total_feedstock_consumption_rule(m, sys, yr):
+        # Total feedstock consumption per system for each year
+        return m.total_feedstock_consumption[sys, yr] == sum(
+            m.feedstock_consumption[sys, fs, yr] for fs in m.feedstocks
         )
 
-    model.total_material_consumption_constraint = Constraint(
-        model.systems, model.years, rule=total_material_consumption_rule
+    model.total_feedstock_consumption_constraint = Constraint(
+        model.systems, model.years, rule=total_feedstock_consumption_rule
     )
 
     # 5. Maximum Material Share Constraint
-    def material_max_share_constraint_rule(m, sys, tech, mat, yr):
+    def feedstock_max_share_constraint_rule(m, sys, tech, fs, yr):
         if yr > min(m.years):
 
-            # Get the maximum allowable share for the (technology, material) combination
-            max_share = data['material_max_ratio'].get((tech, mat), 0)
-            return m.material_consumption[sys, mat, yr] <= (
-                    max_share * m.total_material_consumption[sys, yr] + M_mat * (1 - m.active_technology[sys, tech, yr])
+            # Get the maximum allowable share for the (technology, feedstock) combination
+            max_share = data['feedstock_max_ratio'].get((tech, fs), 0)
+            return m.feedstock_consumption[sys, fs, yr] <= (
+                    max_share * m.total_feedstock_consumption[sys, yr] + M_fs * (1 - m.active_technology[sys, tech, yr])
             )
         else:
             return Constraint.Skip
 
-    model.material_max_share_constraint = Constraint(
-        model.systems, model.technologies, model.materials, model.years, rule=material_max_share_constraint_rule
+    model.feedstock_max_share_constraint = Constraint(
+        model.systems, model.technologies, model.feedstocks, model.years, rule=feedstock_max_share_constraint_rule
     )
 
-    def material_min_share_constraint_rule(m, sys, tech, mat, yr):
+    def feedstock_min_share_constraint_rule(m, sys, tech, fs, yr):
         # Pull the introduction year from your data
-        introduction_year = data['material_introduction'].loc[mat]
+        introduction_year = data['feedstock_introduction'].loc[fs]
 
         # For years before introduction, force zero consumption
         if yr < introduction_year:
-            return m.material_consumption[sys, mat, yr] == 0
+            return m.feedstock_consumption[sys, fs, yr] == 0
 
-        # For introduced materials, apply the min-share logic
-        min_share = data['material_min_ratio'].get((tech, mat), 0)
+        # For introduced feedstocks, apply the min-share logic
+        min_share = data['feedstock_min_ratio'].get((tech, fs), 0)
 
-        # M_mat is your chosen "big M" for materials; you already define it above.
+        # M_fs is your chosen "big M" for feedstocks; you already define it above.
         # The constraint says: if technology (sys, tech) is active,
-        # material_consumption >= min_share * total_material_consumption
-        # Otherwise, it can be relaxed by up to M_mat if the tech is not active.
-        return m.material_consumption[sys, mat, yr] >= (
-                min_share * m.total_material_consumption[sys, yr]
-                - M_mat * (1 - m.active_technology[sys, tech, yr])
+        # feedstock_consumption >= min_share * total_feedstock_consumption
+        # Otherwise, it can be relaxed by up to M_fs if the tech is not active.
+        return m.feedstock_consumption[sys, fs, yr] >= (
+                min_share * m.total_feedstock_consumption[sys, yr]
+                - M_fs * (1 - m.active_technology[sys, tech, yr])
         )
 
-    model.material_min_share_constraint = Constraint(
-        model.systems, model.technologies, model.materials, model.years,
-        rule=material_min_share_constraint_rule
+    model.feedstock_min_share_constraint = Constraint(
+        model.systems, model.technologies, model.feedstocks, model.years,
+        rule=feedstock_min_share_constraint_rule
     )
 
     return model
@@ -548,97 +548,5 @@ def lifespan_constraints(model):
     model.enforce_no_continuation_in_replacement_years_constraint = Constraint(
         model.systems, model.technologies, model.years, rule=enforce_no_continuation_in_replacement_years_rule
     )
-
-    # def no_activity_before_start_rule(m, sys, tech, s, t):
-    #     # If t < s, can't be active yet
-    #     if t < s:
-    #         return m.active_if_started[sys, tech, s, t] == 0
-    #     return Constraint.Skip
-    #
-    # model.no_activity_before_start_constraint = Constraint(
-    #     model.systems, model.technologies, model.years, model.years,
-    #     rule=no_activity_before_start_rule
-    # )
-    #
-    # def no_exceed_lifespan_rule(m, sys, tech, s, t):
-    #     lifespan = m.lifespan_param[tech]
-    #     # If t - s >= lifespan, we must be 0 (cannot be active from that start)
-    #     if (t - s) >= lifespan:
-    #         return m.active_if_started[sys, tech, s, t] == 0
-    #     return Constraint.Skip
-    #
-    # model.no_exceed_lifespan_constraint = Constraint(
-    #     model.systems, model.technologies, model.years, model.years,
-    #     rule=no_exceed_lifespan_rule
-    # )
-    #
-    # def link_active_technology_rule(m, sys, tech, t):
-    #     return (
-    #             m.active_technology[sys, tech, t]
-    #             ==
-    #             sum(m.active_if_started[sys, tech, s, t] for s in m.years if s <= t)
-    #     )
-    #
-    # model.link_active_technology_constraint = Constraint(
-    #     model.systems, model.technologies, model.years,
-    #     rule=link_active_technology_rule
-    # )
-    #
-    # def carry_forward_rule(m, sys, tech, s, t):
-    #     # If t is the last year, skip
-    #     if t == max(m.years):
-    #         return Constraint.Skip
-    #     # If we are active at year t from start s,
-    #     # we can remain active at t+1 from the same start
-    #     # only if we do not replace or renew
-    #     return (
-    #             m.active_if_started[sys, tech, s, t + 1]
-    #             <=
-    #             m.active_if_started[sys, tech, s, t]
-    #             - (m.replace[sys, tech, t + 1] + m.renew[sys, tech, t + 1])
-    #     )
-    #
-    # model.carry_forward_constraint = Constraint(
-    #     model.systems, model.technologies, model.years, model.years,
-    #     rule=carry_forward_rule
-    # )
-    #
-    # def new_start_if_replace_or_renew_rule(m, sys, tech, t):
-    #     # If we do 'replace' or 'renew' in year t+1,
-    #     # we can start a new path s = t+1
-    #     if t == max(m.years):
-    #         return Constraint.Skip
-    #     return (
-    #             m.active_if_started[sys, tech, t + 1, t + 1]
-    #             >=
-    #             m.replace[sys, tech, t + 1] + m.renew[sys, tech, t + 1]
-    #     )
-    #
-    # model.new_start_if_replace_or_renew_constraint = Constraint(
-    #     model.systems, model.technologies, model.years,
-    #     rule=new_start_if_replace_or_renew_rule
-    # )
-    #
-    # def must_replace_or_renew_at_end_rule(m, sys, tech, s, t):
-    #     lifespan = m.lifespan_param[tech]
-    #     # 1) Skip if t is the last year (or if t+1 not in m.years)
-    #     if t == max(m.years):  # or `if (t + 1) not in m.years:`
-    #         return Constraint.Skip
-    #
-    #     # 2) Now it's safe to use t+1
-    #     if (t + 1) - s == lifespan:
-    #         # Must do replace or renew in year t+1
-    #         return (
-    #                 m.replace[sys, tech, t + 1] + m.renew[sys, tech, t + 1]
-    #                 >=
-    #                 m.active_if_started[sys, tech, s, t]
-    #         )
-    #     else:
-    #         return Constraint.Skip
-    #
-    # model.must_replace_or_renew_at_end_constraint = Constraint(
-    #     model.systems, model.technologies, model.years, model.years,
-    #     rule=must_replace_or_renew_at_end_rule
-    # )
 
     return model

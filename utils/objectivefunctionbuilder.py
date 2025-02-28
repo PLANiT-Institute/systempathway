@@ -20,7 +20,7 @@ def objectivefucntion(model, **kwargs):
             # Fuel costs
             sum(model.fuel_cost_param[fuel, yr] * model.fuel_consumption[sys, fuel, yr] for fuel in model.fuels) +
             # Material costs
-            sum(model.material_cost_param[mat, yr] * model.material_consumption[sys, mat, yr] for mat in model.materials)
+            sum(model.feedstock_cost_param[fs, yr] * model.feedstock_consumption[sys, fs, yr] for fs in model.feedstocks)
             for sys in model.systems for yr in model.years
         )
     
