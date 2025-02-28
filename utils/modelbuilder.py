@@ -1,15 +1,15 @@
-from pyomo.environ import (
-    ConcreteModel, Var, NonNegativeReals, Binary, Param,
-    Objective, Constraint, SolverFactory, Set, minimize, value, Any
-)
+from pyomo.environ import (ConcreteModel, Objective, Constraint, minimize)
 import pandas as pd
+import importlib
+import utils.parameterbuilder as _param
+
+importlib.reload(_param)
 
 def build_unified_model(data, **kwargs):
     """
     Get kwargs
     """
     carbonprice_include = kwargs.get('carbonprice_include', False)
-    max_renew = kwargs.get('max_renew', 10)
     allow_replace_same_technology = kwargs.get('allow_replace_same_technology', False)
 
     """
@@ -17,178 +17,8 @@ def build_unified_model(data, **kwargs):
     """
 
     model = ConcreteModel()
+    model = _param.build_parameters(data, model, **kwargs)
 
-    # --------------------------
-    # 1. Define Sets
-    # --------------------------
-    model.systems = Set(initialize=data['baseline'].index.tolist())
-    model.technologies = Set(initialize=data['technology'].index.tolist())
-    model.fuels = Set(initialize=data['fuel_cost'].index.tolist())
-    model.materials = Set(initialize=data['material_cost'].index.tolist())
-    model.years = Set(initialize=sorted([int(yr) for yr in data['capex'].columns.tolist()]))
-
-
-    # Extract and structure multi-fuel data by system and technology
-    baseline_fuels_data = {
-        sys: row['fuels']
-        for sys, row in data['baseline'].iterrows()
-    }
-    baseline_fuel_shares_data = {
-        sys: row['fuel_shares']
-        for sys, row in data['baseline'].iterrows()
-    }
-
-    # Similarly, for materials
-    baseline_materials_data = {
-        sys: row['materials']
-        for sys, row in data['baseline'].iterrows()
-    }
-    baseline_material_shares_data = {
-        sys: row['material_shares']
-        for sys, row in data['baseline'].iterrows()
-    }
-
-    # Define parameters for baseline fuels and materials
-    model.baseline_fuels = Param(model.systems, initialize=baseline_fuels_data, within=Any)
-    model.baseline_fuel_shares = Param(model.systems, initialize=baseline_fuel_shares_data, within=Any)
-    model.baseline_materials = Param(model.systems, initialize=baseline_materials_data, within=Any)
-    model.baseline_material_shares = Param(model.systems, initialize=baseline_material_shares_data, within=Any)
-
-    baseline_production_data = {
-        sys: baseline_row['production'] for sys, baseline_row in data['baseline'].iterrows()
-    }
-    model.baseline_production = Param(model.systems, initialize=baseline_production_data, within=NonNegativeReals)
-
-
-    # --------------------------
-    # 2. Define Parameters
-    # --------------------------
-
-    model.carbonprice_param = Param(model.years,
-                                    initialize=lambda m, yr: data['carbonprice'].loc['global', yr],
-                                    default=0.0)
-
-
-    # CAPEX, OPEX, Renewal
-    model.capex_param = Param(model.technologies, model.years,
-                              initialize=lambda m, tech, yr: data['capex'].loc[tech, yr],
-                              default=0.0)
-    model.opex_param = Param(model.technologies, model.years,
-                             initialize=lambda m, tech, yr: data['opex'].loc[tech, yr],
-                             default=0.0)
-    model.renewal_param = Param(model.technologies, model.years,
-                                initialize=lambda m, tech, yr: data['renewal'].loc[tech, yr],
-                                default=0.0)
-
-    # Fuel and Material Costs and Efficiencies
-    model.fuel_cost_param = Param(model.fuels, model.years,
-                                  initialize=lambda m, f, yr: data['fuel_cost'].loc[f, yr],
-                                  default=0.0)
-    model.fuel_eff_param = Param(model.fuels, model.years,
-                                 initialize=lambda m, f, yr: data['fuel_efficiency'].loc[f, yr],
-                                 default=0.0)
-    model.fuel_emission = Param(model.fuels, model.years,
-                                initialize=lambda m, f, yr: data['fuel_emission'].loc[f, yr],
-                                default=0.0)
-
-    model.material_cost_param = Param(model.materials, model.years,
-                                      initialize=lambda m, mat, yr: data['material_cost'].loc[mat, yr],
-                                      default=0.0)
-    model.material_eff_param = Param(model.materials, model.years,
-                                     initialize=lambda m, mat, yr: data['material_efficiency'].loc[mat, yr],
-                                     default=0.0)
-    model.material_emission = Param(model.materials, model.years,
-                                    initialize=lambda m, mat, yr: data['material_emission'].loc[mat, yr],
-                                    default=0.0)
-
-    # Lifespan and Introduction Year
-    production = data['baseline']['production'].to_dict()
-    model.production_param = Param(model.systems,
-                                   initialize=lambda m, sys: production[sys],
-                                   default = 0)
-
-    introduced_year_data = data['baseline']['introduced_year'].to_dict()
-    model.lifespan_param = Param(model.technologies,
-                                 initialize=lambda m, tech: data['technology'].loc[tech, 'lifespan'],
-                                 default=0)
-    model.introduced_year_param = Param(model.systems,
-                                        initialize=lambda m, sys: introduced_year_data.get(sys, 0),
-                                        default=0)
-
-    # Emission Parameters
-    model.technology_ei = Param(model.technologies, model.years,
-                                initialize=lambda m, tech, yr: data['technology_ei'].loc[tech, yr],
-                                default=1.0)
-    model.emission_limit = Param(model.years,
-                                 initialize=lambda m, yr: data['emission'].loc['global', yr],
-                                 default=0)
-
-    # Technology Introduction
-    model.technology_introduction = Param(model.technologies,
-                                          initialize=lambda m, tech: data['technology'].loc[tech, 'introduction'],
-                                          default=0)
-
-    # Baseline Technology and Fuel
-    model.baseline_technology = Param(
-        model.systems,
-        initialize=lambda m, sys: data['baseline'].loc[sys, 'technology'],
-        within=model.technologies
-    )
-
-
-    # --------------------------
-    # 3. Define Decision Variables
-    # --------------------------
-    # Binary Variables
-    model.replace = Var(model.systems, model.technologies, model.years, domain=Binary, initialize=0)
-    model.active_technology = Var(model.systems, model.technologies, model.years, domain=Binary, initialize=0)
-    model.continue_technology = Var(model.systems, model.technologies, model.years, domain=Binary, initialize=0)
-    model.fuel_select = Var(model.systems, model.fuels, model.years, domain=Binary, initialize=0)
-    model.material_select = Var(model.systems, model.materials, model.years, domain=Binary, initialize=0)
-
-    # Continuous Variables
-    model.production = Var(model.systems, model.years, domain=NonNegativeReals, initialize=0)
-    model.fuel_consumption = Var(model.systems, model.fuels, model.years, domain=NonNegativeReals, initialize=0)
-    model.material_consumption = Var(model.systems, model.materials, model.years, domain=NonNegativeReals, initialize=0)
-    model.emission_by_tech = Var(model.systems, model.technologies, model.years, domain=NonNegativeReals, initialize=0)
-
-    # Auxiliary Variables for Linearization
-    model.prod_active = Var(model.systems, model.technologies, model.years, domain=NonNegativeReals, initialize=0)
-    model.replace_prod_active = Var(model.systems, model.technologies, model.years, domain=NonNegativeReals, initialize=0)
-    model.renew_prod_active = Var(model.systems, model.technologies, model.years, domain=NonNegativeReals, initialize=0)
-
-    # Activation Change Variable
-    model.activation_change = Var(
-        model.systems, model.technologies, model.years,
-        domain=Binary,
-        initialize=0
-    )
-
-    model.renew = Var(model.systems, model.technologies, model.years, domain=Binary)
-    model.max_renew = Param(initialize=max_renew)  # Example value; set as needed
-
-    # 1. Total Fuel Consumption for Each System
-    model.total_fuel_consumption = Var(model.systems, model.years, within=NonNegativeReals)
-    model.total_material_consumption = Var(model.systems, model.years, within=NonNegativeReals)
-    # --------------------------
-    # 4. Define Constraints
-    # --------------------------
-
-
-    """
-    Emission Constraints
-    """
-    # # 4.1. Emission Constraints
-
-    # Auxiliary variables to capture consumption only if the tech is active
-    model.active_fuel_consumption = Var(
-        model.systems, model.technologies, model.fuels, model.years,
-        domain=NonNegativeReals
-    )
-    model.active_material_consumption = Var(
-        model.systems, model.technologies, model.materials, model.years,
-        domain=NonNegativeReals
-    )
 
     BIG_M = 1e15  # Adjust based on your data scale
 
@@ -273,31 +103,6 @@ def build_unified_model(data, **kwargs):
         model.emission_limit_constraint = Constraint(
             model.years, rule=emission_limit_rule
         )
-
-    # def emission_by_tech_rule(m, sys, tech, yr):
-    #     # if yr == min(m.years):
-    #     #     return Constraint.Skip
-    #     # else:
-    #     return m.emission_by_tech[sys, tech, yr] == (
-    #         m.technology_ei[tech, yr] * (
-    #             sum(m.fuel_emission[f, yr] * m.fuel_consumption[sys, f, yr] for f in m.fuels) +
-    #             sum(m.material_emission[mat, yr] * m.material_consumption[sys, mat, yr] for mat in m.materials)
-    #         )
-    #     )
-    #
-    # model.emission_by_tech_constraint = Constraint(model.systems, model.technologies, model.years,
-    #                                                rule=emission_by_tech_rule)
-    #
-    # def emission_limit_rule(m, yr):
-    #     # if yr == min(m.years):
-    #     #     return Constraint.Skip
-    #     # else:
-    #     return sum(
-    #         m.emission_by_tech[sys, tech, yr] for sys in m.systems for tech in m.technologies) <= \
-    #         m.emission_limit[yr]
-    #
-    # if carbonprice_include == False:
-    #     model.emission_limit_constraint = Constraint(model.years, rule=emission_limit_rule)
 
     def technology_activation_rule(m, sys, yr):
         return sum(m.active_technology[sys, tech, yr] for tech in m.technologies) == 1
