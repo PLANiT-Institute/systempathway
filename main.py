@@ -56,7 +56,7 @@ def main(file_path, **kwargs):
     annual_global_opex = {yr: 0.0 for yr in model.years}
     annual_global_total_emissions = {yr: 0.0 for yr in model.years}
     annual_global_fuel_consumption = {yr: {fuel: 0.0 for fuel in model.fuels} for yr in model.years}
-    annual_global_material_consumption = {yr: {mat: 0.0 for mat in model.materials} for yr in model.years}
+    annual_global_feedstock_consumption = {yr: {fs: 0.0 for fs in model.feedstocks} for yr in model.years}
     annual_global_tech_adoption = {yr: {tech: 0 for tech in model.technologies} for yr in model.years}
 
     # Collect Results (Facility Level)
@@ -94,14 +94,14 @@ def main(file_path, **kwargs):
                 value(model.emission_by_tech[sys, tech, yr]) for tech in model.technologies
             )
             fuel_consumption = {fuel: value(model.fuel_consumption[sys, fuel, yr]) for fuel in model.fuels}
-            material_consumption = {mat: value(model.material_consumption[sys, mat, yr]) for mat in model.materials}
+            feedstock_consumption = {fs: value(model.feedstock_consumption[sys, fs, yr]) for fs in model.feedstocks}
 
             yearly_metrics.append({
                 "Year": yr, "CAPEX": capex_cost, "Renewal Cost": renewal_cost,
                 "OPEX": opex_cost, "Total Emissions": total_emissions
             })
             fuel_consumption_table.append({"Year": yr, **fuel_consumption})
-            material_consumption_table.append({"Year": yr, **material_consumption})
+            material_consumption_table.append({"Year": yr, **feedstock_consumption})
             for tech in model.technologies:
                 active = value(model.active_technology[sys, tech, yr])
                 technology_statuses.append({
@@ -119,8 +119,8 @@ def main(file_path, **kwargs):
             annual_global_total_emissions[yr] += total_emissions
             for fuel in model.fuels:
                 annual_global_fuel_consumption[yr][fuel] += fuel_consumption[fuel]
-            for mat in model.materials:
-                annual_global_material_consumption[yr][mat] += material_consumption[mat]
+            for fs in model.feedstocks:
+                annual_global_feedstock_consumption[yr][fs] += feedstock_consumption[fs]
 
         costs_df = pd.DataFrame(yearly_metrics).set_index("Year")
         print("=== Costs and Emissions by Year ===")
@@ -156,13 +156,102 @@ def main(file_path, **kwargs):
             "Total Cost": total_cost,
             "Total Emissions": annual_global_total_emissions[yr],
             **{f"Fuel Consumption ({fuel})": annual_global_fuel_consumption[yr][fuel] for fuel in model.fuels},
-            **{f"Material Consumption ({mat})": annual_global_material_consumption[yr][mat] for mat in model.materials},
+            **{f"Material Consumption ({fs})": annual_global_feedstock_consumption[yr][fs] for fs in model.feedstocks},
             **{f"Tech Adoption ({tech})": annual_global_tech_adoption[yr][tech] for tech in model.technologies},
         })
 
     annual_summary_df = pd.DataFrame(annual_summary).set_index("Year")
     print(annual_summary_df)
+    
+    # Export results to Excel
+    print("\n=== Exporting results to Excel ===")
+    with pd.ExcelWriter('results_output.xlsx') as writer:
+        # Global summary
+        annual_summary_df.to_excel(writer, sheet_name='Global_Summary')
+        
+        # System-specific results
+        system_results = {}
+        for sys in model.systems:
+            # Create a dictionary to store all dataframes for this system
+            system_results[sys] = {}
+            
+            # Prepare data for this system
+            yearly_metrics = []
+            fuel_consumption_table = []
+            feedstock_consumption_table = []
+            technology_statuses = []
+            
+            baseline_tech = data['baseline'].loc[sys, 'technology']
+            introduced_year = data['baseline'].loc[sys, 'introduced_year']
+            lifespan = model.lifespan_param[baseline_tech]
+            
+            for yr in model.years:
+                capex_cost = sum(
+                    model.capex_param[tech, yr] * value(model.replace_prod_active[sys, tech, yr])
+                    for tech in model.technologies
+                )
+                if yr == min(model.years) and baseline_tech in model.technologies:
+                    capex_adjustment = model.capex_param[baseline_tech, yr] * (
+                            (lifespan - (yr - introduced_year)) / lifespan
+                    ) * value(model.production[sys, yr])
+                    capex_cost += capex_adjustment
+                
+                renewal_cost = sum(
+                    model.renewal_param[tech, yr] * value(model.renew_prod_active[sys, tech, yr])
+                    for tech in model.technologies
+                )
+                opex_cost = sum(
+                    model.opex_param[tech, yr] * value(model.prod_active[sys, tech, yr])
+                    for tech in model.technologies
+                )
+                total_emissions = sum(
+                    value(model.emission_by_tech[sys, tech, yr]) for tech in model.technologies
+                )
+                fuel_consumption = {fuel: value(model.fuel_consumption[sys, fuel, yr]) for fuel in model.fuels}
+                feedstock_consumption = {fs: value(model.feedstock_consumption[sys, fs, yr]) for fs in model.feedstocks}
+                
+                yearly_metrics.append({
+                    "Year": yr, "CAPEX": capex_cost, "Renewal Cost": renewal_cost,
+                    "OPEX": opex_cost, "Total Emissions": total_emissions
+                })
+                fuel_consumption_table.append({"Year": yr, **fuel_consumption})
+                feedstock_consumption_table.append({"Year": yr, **feedstock_consumption})
+                
+                for tech in model.technologies:
+                    technology_statuses.append({
+                        "Year": yr, "Technology": tech,
+                        "Continue": value(model.continue_technology[sys, tech, yr]),
+                        "Replace": value(model.replace[sys, tech, yr]),
+                        "Renew": value(model.renew[sys, tech, yr]),
+                        "Active": value(model.active_technology[sys, tech, yr])
+                    })
+            
+                # Create dataframes
+                system_results[sys]['costs'] = pd.DataFrame(yearly_metrics).set_index("Year")
+                system_results[sys]['fuel'] = pd.DataFrame(fuel_consumption_table).set_index("Year")
+                system_results[sys]['feedstock'] = pd.DataFrame(feedstock_consumption_table).set_index("Year")
+                system_results[sys]['technology'] = pd.DataFrame(technology_statuses)
+                
+                # Export to Excel
+                system_results[sys]['costs'].to_excel(writer, sheet_name=f'{sys}_Costs')
+                system_results[sys]['fuel'].to_excel(writer, sheet_name=f'{sys}_Fuel')
+                system_results[sys]['feedstock'].to_excel(writer, sheet_name=f'{sys}_Feedstock')
+                system_results[sys]['technology'].to_excel(writer, sheet_name=f'{sys}_Technology')
+            
+            # Export production data
+            production_data = []
+            for yr in model.years:
+                production_data.append({
+                    "System": sys,
+                    "Year": yr,
+                    "Production": value(model.production[sys, yr])
+                })
+            production_df = pd.DataFrame(production_data)
+            production_df.to_excel(writer, sheet_name='Production', index=False)
+        
+    print(f"Results exported to 'results_output.xlsx'")
 
+    return annual_summary_df
 
 if __name__ == "__main__":
     file_path = 'database/steel_data.xlsx'
@@ -170,3 +259,4 @@ if __name__ == "__main__":
                   carboprice_include=False,
                   max_renew = 10,
                   allow_replace_same_technology = False)
+ 
