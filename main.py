@@ -72,9 +72,9 @@ def main(file_path, **kwargs):
     }
 
 if __name__ == "__main__":
-    file_path = 'database/steel_data.xlsx'
+    file_path = 'database/steel_data_0310.xlsx'
     output = main(file_path, 
                  carboprice_include=False,
-                 max_renew=10,
+                 max_renew=2,
                  allow_replace_same_technology=False)
  
