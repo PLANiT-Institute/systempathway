@@ -2,6 +2,7 @@ from pyomo.environ import *
 
 from pyomo.util.infeasible import log_infeasible_constraints
 import pandas as pd
+import os
 
 import importlib
 import utils.load_data as _ld
@@ -10,17 +11,23 @@ import utils.modelbuilder as _md
 importlib.reload(_ld)
 importlib.reload(_md)
 
-def main(file_path, **kwargs):
+def main(file_path, group_dict=None, **kwargs):
 
     carbonprice_include = kwargs.get('carboprice_include', False)
     max_renew = kwargs.get('max_renew', 10)
-    allow_replace_same_technology = kwargs.get('allow_replace_same_technology', False
-                                               )
+    allow_replace_same_technology = kwargs.get('allow_replace_same_technology', False)
     # --------------------------
     # 7. Load Data
     # --------------------------
 
     data = _ld.load_data(file_path)
+    
+    # Filter systems based on group_dict if provided
+    if group_dict:
+        # Convert set to list for pandas indexing
+        selected_systems = list(set([sys for sys_list in group_dict.values() for sys in sys_list]))
+        data = {key: df.loc[selected_systems] if isinstance(df, pd.DataFrame) and not df.empty else df 
+                for key, df in data.items()}
 
     # --------------------------
     # 8. Build the Unified Model
@@ -29,7 +36,6 @@ def main(file_path, **kwargs):
                                 carbonprice_include=carbonprice_include,
                                 max_renew=max_renew,
                                 allow_replace_same_technology=allow_replace_same_technology)
-
 
     # Solve the Model
     solver = SolverFactory('glpk')
@@ -58,6 +64,11 @@ def main(file_path, **kwargs):
     annual_global_fuel_consumption = {yr: {fuel: 0.0 for fuel in model.fuels} for yr in model.years}
     annual_global_feedstock_consumption = {yr: {fs: 0.0 for fs in model.feedstocks} for yr in model.years}
     annual_global_tech_adoption = {yr: {tech: 0 for tech in model.technologies} for yr in model.years}
+    
+    # Initialize Group Metrics if group_dict is provided
+    group_emissions = {grp: {yr: 0.0 for yr in model.years} for grp in group_dict} if group_dict else None
+    group_production = {grp: {yr: 0.0 for yr in model.years} for grp in group_dict} if group_dict else None
+    group_production_weighted_ei = {grp: {yr: 0.0 for yr in model.years} for grp in group_dict} if group_dict else None
 
     # Collect Results (Facility Level)
     for sys in model.systems:
@@ -121,6 +132,21 @@ def main(file_path, **kwargs):
                 annual_global_fuel_consumption[yr][fuel] += fuel_consumption[fuel]
             for fs in model.feedstocks:
                 annual_global_feedstock_consumption[yr][fs] += feedstock_consumption[fs]
+
+            # Track group metrics if group_dict is provided
+            if group_dict:
+                for grp, sys_list in group_dict.items():
+                    if sys in sys_list:
+                        group_emissions[grp][yr] += total_emissions
+                        group_production[grp][yr] += value(model.production[sys, yr])
+                        # Calculate production-weighted emission intensity for this system
+                        system_prod_weighted_ei = sum(
+                            value(model.prod_active[sys, tech, yr]) * 
+                            (model.emission_intensity_param[tech] if hasattr(model, 'emission_intensity_param') else 0)
+                            for tech in model.technologies
+                        )
+                        group_production_weighted_ei[grp][yr] += system_prod_weighted_ei
+                        break
 
         costs_df = pd.DataFrame(yearly_metrics).set_index("Year")
         print("=== Costs and Emissions by Year ===")
@@ -251,12 +277,57 @@ def main(file_path, **kwargs):
         
     print(f"Results exported to 'results_output.xlsx'")
 
-    return annual_summary_df
+    # Calculate and display group emission allocations if group_dict is provided
+    if group_dict:
+        print("\n=== Grouped Emission Allocations ===")
+        group_emission_allocation = {}
+        for yr in model.years:
+            group_emission_allocation[yr] = {}
+            for grp in group_dict:
+                if group_production_weighted_ei[grp][yr] > 0:
+                    group_emission_allocation[yr][grp] = group_emissions[grp][yr] / group_production_weighted_ei[grp][yr]
+                else:
+                    group_emission_allocation[yr][grp] = 0
+        
+        # Create DataFrame for group emission allocations
+        group_allocation_df = pd.DataFrame.from_dict(
+            {(yr, grp): group_emission_allocation[yr][grp] 
+             for yr in model.years for grp in group_dict},
+            orient='index', columns=['Allocated Emissions']
+        )
+        group_allocation_df.index = pd.MultiIndex.from_tuples(group_allocation_df.index, names=['Year', 'Group'])
+        group_allocation_df = group_allocation_df.unstack(level='Group')
+        print(group_allocation_df)
+        
+        # Add to Excel export
+        with pd.ExcelWriter('results_output.xlsx', mode='a') if os.path.exists('results_output.xlsx') else pd.ExcelWriter('results_output.xlsx') as writer:
+            group_allocation_df.to_excel(writer, sheet_name='Group_Emissions')
+            
+            # Also export group emissions and production
+            pd.DataFrame({(yr, grp): group_emissions[grp][yr] 
+                         for yr in model.years for grp in group_dict}).unstack().to_excel(writer, sheet_name='Group_Total_Emissions')
+            
+            pd.DataFrame({(yr, grp): group_production[grp][yr] 
+                         for yr in model.years for grp in group_dict}).unstack().to_excel(writer, sheet_name='Group_Production')
+
+    return {
+        "annual_summary": annual_summary_df,
+        "group_emission_allocation": group_emission_allocation if group_dict else None,
+        "annual_global_total_emissions": annual_global_total_emissions
+    }
 
 if __name__ == "__main__":
     file_path = 'database/steel_data.xlsx'
+    
+    # Define groups of systems to analyze
+    group_dict = {
+        "Group A": ["Sys1", "Sys2"],
+        "Group B": ["Sys3", "Sys4"]
+    }
+    
     output = main(file_path,
+                  group_dict=group_dict,  # Pass the group dictionary
                   carboprice_include=False,
-                  max_renew = 10,
-                  allow_replace_same_technology = False)
+                  max_renew=10,
+                  allow_replace_same_technology=False)
  
