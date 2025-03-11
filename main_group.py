@@ -511,7 +511,12 @@ def optimize_by_group(file_path, group_dict, global_emission_limit=None, allocat
 def main():
     file_path = 'database/steel_data.xlsx'
     
-    # Define groups of systems to analyze
+    # Calculate baseline emissions for each system
+    baseline_emissions_by_system = calculate_baseline_emissions(file_path)
+    print("\n=== Baseline Emissions by System ===")
+    for system, emissions in baseline_emissions_by_system.items():
+        print(f"{system}: {emissions:.2f}")
+    
     group_dict = {
         "Group1": [  # Positions 1, 4, 7, 10, 13
             "Gwangyang BF2",
@@ -575,6 +580,83 @@ def main():
     )
     
     return results
+
+def calculate_baseline_emissions(file_path):
+    """
+    Calculate the baseline emissions for each system based on the initial data.
+    
+    Parameters:
+    -----------
+    file_path : str
+        Path to the Excel file containing data
+    
+    Returns:
+    --------
+    dict
+        Dictionary with system names as keys and their baseline emissions as values
+    """
+    # Load the data
+    data = _ld.load_data(file_path)
+    
+    # Initialize dictionary to store baseline emissions for each system
+    baseline_emissions = {}
+    
+    # Get the first year (baseline year)
+    if 'emission' in data and not data['emission'].empty:
+        years = data['emission'].columns.tolist()
+        baseline_year = min(years)
+    else:
+        print("Warning: No emission data found or emission data is empty.")
+        return baseline_emissions
+    
+    # Calculate baseline emissions for each system
+    for system in data['baseline'].index:
+        # Get baseline technology, fuels, and feedstocks for this system
+        baseline_tech = data['baseline'].loc[system, 'technology']
+        baseline_production = data['baseline'].loc[system, 'production']
+        baseline_fuels = data['baseline'].loc[system, 'fuels']
+        baseline_fuel_shares = data['baseline'].loc[system, 'fuel_shares']
+        baseline_feedstocks = data['baseline'].loc[system, 'feedstocks']
+        baseline_feedstock_shares = data['baseline'].loc[system, 'feedstock_shares']
+        
+        # Initialize emissions for this system
+        system_emissions = 0.0
+        
+        # Calculate emissions from fuels
+        for i, fuel in enumerate(baseline_fuels):
+            if i < len(baseline_fuel_shares):
+                fuel_share = baseline_fuel_shares[i]
+                fuel_intensity = data['fuel_intensity'].loc[fuel, baseline_year] if fuel in data['fuel_intensity'].index else 0
+                fuel_emission_factor = data['fuel_emission'].loc[fuel, baseline_year] if fuel in data['fuel_emission'].index else 0
+                
+                # Calculate fuel consumption and associated emissions
+                fuel_consumption = baseline_production * fuel_share * fuel_intensity
+                fuel_emissions = fuel_consumption * fuel_emission_factor
+                
+                system_emissions += fuel_emissions
+        
+        # Calculate emissions from feedstocks
+        for i, feedstock in enumerate(baseline_feedstocks):
+            if i < len(baseline_feedstock_shares):
+                feedstock_share = baseline_feedstock_shares[i]
+                feedstock_intensity = data['feedstock_intensity'].loc[feedstock, baseline_year] if feedstock in data['feedstock_intensity'].index else 0
+                feedstock_emission_factor = data['feedstock_emission'].loc[feedstock, baseline_year] if feedstock in data['feedstock_emission'].index else 0
+                
+                # Calculate feedstock consumption and associated emissions
+                feedstock_consumption = baseline_production * feedstock_share * feedstock_intensity
+                feedstock_emissions = feedstock_consumption * feedstock_emission_factor
+                
+                system_emissions += feedstock_emissions
+        
+        # Apply technology emission intensity factor
+        if baseline_tech in data['technology_ei'].index:
+            tech_ei_factor = data['technology_ei'].loc[baseline_tech, baseline_year]
+            system_emissions *= tech_ei_factor
+        
+        # Store the calculated emissions
+        baseline_emissions[system] = system_emissions
+    
+    return baseline_emissions
 
 def main_baseline(file_path, **kwargs):
     """
