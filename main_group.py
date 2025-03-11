@@ -513,22 +513,24 @@ def main():
     
     # Define groups of systems to analyze
     group_dict = {
-        "Group1": [  # Even positions
-            "HyundaiBF1",
-            "Pohang FNX3",
-            "Gwangyang BF1",
-            "Pohang BF2",
-            "Pohang BF3",
-            "Gwangyang BF4"
-        ],
-        "Group2": [  # Odd positions
+        "Group1": [  # Positions 1, 4, 7, 10, 13
             "Gwangyang BF2",
-            "HyundaiBF2",
-            "Pohang FNX2",
+            "Pohang FNX3",
             "HyundaiBF3",
-            "Gwangyang BF5",
-            "Gwangyang BF3",
+            "Pohang BF3",
             "Pohang BF4"
+        ],
+        "Group2": [  # Positions 2, 5, 8, 11
+            "HyundaiBF1",
+            "Pohang FNX2",
+            "Pohang BF2",
+            "Gwangyang BF3"
+        ],
+        "Group3": [  # Positions 3, 6, 9, 12
+            "HyundaiBF2",
+            "Gwangyang BF1",
+            "Gwangyang BF5",
+            "Gwangyang BF4"
         ]
     }
     
