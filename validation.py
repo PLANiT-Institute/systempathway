@@ -3,7 +3,7 @@ import utils.load_data as _ld
 
 
 def load_and_validate_data():
-    file_path = 'database/steel_data.xlsx'  # Update with your actual file path
+    file_path = 'database/steel_data_0310_g1.xlsx'  # Update with your actual file path
     data = _ld.load_data(file_path)
 
     return validate_data(data)

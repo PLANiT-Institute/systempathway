@@ -651,7 +651,7 @@ def save_results_to_excel(output, output_file='results_g1.xlsx'):
     return output_file
 
 if __name__ == "__main__":
-    file_path = 'database/steel_data_0310_g1.xlsx'
+    file_path = 'database/steel_data_0310_global.xlsx'
     output = main(file_path, 
                  carboprice_include=False,
                  max_renew=2,
@@ -659,4 +659,4 @@ if __name__ == "__main__":
     
     if output:
         # Save results to the specific file name
-        save_results_to_excel(output, 'results_g1.xlsx')
+        save_results_to_excel(output, 'results_global.xlsx')

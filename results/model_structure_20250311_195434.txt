@@ -1,0 +1,70 @@
+=== SETS ===
+Set: systems
+  Values: ['Pohang BF3', 'HyundaiBF3', 'Pohang BF4', 'Gwangyang BF2', 'Pohang FNX3']
+Set: technologies
+  Values: ['BF-BOF', 'BF-BOF-FX', 'H2-DRI-ESF', 'EAF']
+Set: fuels
+  Values: ['Coal_BB', 'BF gas_BB', 'COG_BB', 'BOF gas_BB', 'Natural gas_BB', 'Electricity_BB', 'Coal_BX', 'BF gas_BX', 'BOF gas_BX', 'Natural gas_BX', 'Electricity_BX', 'Hydrogen_H2', 'Electricity_H2', 'Electricity_EAF', 'Hydrogen_EAF']
+Set: feedstocks
+  Values: ['Iron ore_BB', 'Scrap_BB', 'HBI_BB', 'Iron ore_BX', 'Iron ore_H2', 'Scrap_H2', 'Scrap_EAF', 'HBI_EAF']
+Set: years
+  Values: [2025, 2026, 2027, 2028, 2029, 2030, 2031, 2032, 2033, 2034, 2035, 2036, 2037, 2038, 2039, 2040, 2041, 2042, 2043, 2044, 2045, 2046, 2047, 2048, 2049, 2050]
+
+=== VARIABLES ===
+Variable: replace
+  Size: 520
+  (Too many indices to display)
+Variable: active_technology
+  Size: 520
+  (Too many indices to display)
+Variable: continue_technology
+  Size: 520
+  (Too many indices to display)
+Variable: fuel_select
+  Size: 1950
+  (Too many indices to display)
+Variable: feedstock_select
+  Size: 1040
+  (Too many indices to display)
+Variable: production
+  Size: 130
+  (Too many indices to display)
+Variable: fuel_consumption
+  Size: 1950
+  (Too many indices to display)
+Variable: feedstock_consumption
+  Size: 1040
+  (Too many indices to display)
+Variable: emission_by_tech
+  Size: 520
+  (Too many indices to display)
+Variable: prod_active
+  Size: 520
+  (Too many indices to display)
+Variable: replace_prod_active
+  Size: 520
+  (Too many indices to display)
+Variable: renew_prod_active
+  Size: 520
+  (Too many indices to display)
+Variable: activation_change
+  Size: 520
+  (Too many indices to display)
+Variable: renew
+  Size: 520
+  (Too many indices to display)
+Variable: total_fuel_consumption
+  Size: 130
+  (Too many indices to display)
+Variable: total_feedstock_consumption
+  Size: 130
+  (Too many indices to display)
+Variable: active_fuel_consumption
+  Size: 7800
+  (Too many indices to display)
+Variable: active_feedstock_consumption
+  Size: 4160
+  (Too many indices to display)
+Variable: active_if_started
+  Size: 13520
+  (Too many indices to display)
