@@ -1382,7 +1382,7 @@ def save_results_to_excel(output, output_file='results_global.xlsx'):
     return output_file
 
 if __name__ == "__main__":
-    file_path = 'database/steel_data_0310_global.xlsx'
+    file_path = 'database/steel_data_0310_domestic.xlsx'
     output = main(file_path, 
                  carboprice_include=False,
                  max_renew=2,
@@ -1390,4 +1390,4 @@ if __name__ == "__main__":
     
     if output:
         # Save results to the specific file name
-        save_results_to_excel(output, 'results_global.xlsx')
+        save_results_to_excel(output, 'results_domestic.xlsx')

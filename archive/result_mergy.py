@@ -6,7 +6,7 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.chart import BarChart, LineChart, Reference, Series
 
-def merge_excel_files(input_files, output_file, add_colors=True):
+def merge_excel_files(input_files, output_file, add_colors=True, calculate_fuel_costs=True):
     """
     Merge multiple Excel files into a single Excel file with scenario identifiers.
     
@@ -14,6 +14,7 @@ def merge_excel_files(input_files, output_file, add_colors=True):
     input_files (list): List of input Excel file paths
     output_file (str): Path for the output Excel file
     add_colors (bool): Whether to add color coding to the merged file
+    calculate_fuel_costs (bool): Whether to calculate and add fuel costs
     """
     # Check if any input files exist
     valid_files = [f for f in input_files if os.path.exists(f)]
@@ -29,6 +30,9 @@ def merge_excel_files(input_files, output_file, add_colors=True):
     
     # Track scenarios found
     scenarios_found = []
+    
+    # Store fuel consumption data for later cost calculation
+    fuel_consumption_data = {}
     
     # Process each input file
     for file_idx, file_path in enumerate(input_files):
@@ -48,6 +52,10 @@ def merge_excel_files(input_files, output_file, add_colors=True):
             for sheet_name in excel_file.sheet_names:
                 try:
                     df = pd.read_excel(file_path, sheet_name=sheet_name)
+                    
+                    # Store fuel consumption data if this is the relevant sheet
+                    if sheet_name == 'Fuel_Consumption' and calculate_fuel_costs:
+                        fuel_consumption_data[scenario] = df.copy()
                     
                     # Add a scenario column to identify the source file
                     df['Scenario'] = scenario
@@ -75,6 +83,17 @@ def merge_excel_files(input_files, output_file, add_colors=True):
         except Exception as e:
             print(f"Error processing file {file_path}: {str(e)}")
     
+    # Calculate and add fuel costs if requested
+    if calculate_fuel_costs and fuel_consumption_data:
+        try:
+            fuel_costs_df = calculate_fuel_costs(fuel_consumption_data, scenarios_found)
+            if not fuel_costs_df.empty:
+                fuel_costs_df.to_excel(writer, sheet_name='Fuel_Costs', index=False)
+                processed_sheets.add('Fuel_Costs')
+                print("Added Fuel_Costs sheet to the merged file")
+        except Exception as e:
+            print(f"Error calculating fuel costs: {str(e)}")
+    
     # Save the output file
     writer.close()
     print(f"Merged data saved to {output_file}")
@@ -87,6 +106,105 @@ def merge_excel_files(input_files, output_file, add_colors=True):
     create_summary_charts(output_file, scenarios_found)
     
     return True
+
+def calculate_fuel_costs(fuel_consumption_data, scenarios):
+    """
+    Calculate fuel costs based on fuel consumption data and standard fuel prices.
+    
+    Parameters:
+    fuel_consumption_data (dict): Dictionary of DataFrames with fuel consumption by scenario
+    scenarios (list): List of scenarios
+    
+    Returns:
+    DataFrame: Calculated fuel costs
+    """
+    # Define standard fuel prices ($/unit)
+    # These are example prices - adjust as needed for your specific fuels
+    fuel_prices = {
+        'coal': 100,       # $/ton
+        'natural_gas': 5,  # $/MMBtu
+        'electricity': 70, # $/MWh
+        'hydrogen': 5,     # $/kg
+        'biomass': 120,    # $/ton
+        'oil': 80,         # $/barrel
+        'coke': 300,       # $/ton
+        'COG': 4,          # $/MMBtu
+        'BFG': 2,          # $/MMBtu
+        'BOFG': 3,         # $/MMBtu
+    }
+    
+    # Initialize results list
+    fuel_costs_data = []
+    
+    # Process each scenario
+    for scenario in scenarios:
+        if scenario not in fuel_consumption_data:
+            continue
+            
+        df = fuel_consumption_data[scenario]
+        
+        # Process each row in the fuel consumption data
+        for _, row in df.iterrows():
+            system = row.get('System', 'Unknown')
+            year = row.get('Year', 0)
+            fuel = row.get('Fuel', '')
+            consumption = row.get('Consumption', 0)
+            
+            # Calculate cost based on fuel type and consumption
+            fuel_price = fuel_prices.get(fuel.lower(), 0)  # Default to 0 if fuel not found
+            if fuel_price > 0 and consumption > 0:
+                cost = fuel_price * consumption
+                
+                fuel_costs_data.append({
+                    'Scenario': scenario,
+                    'System': system,
+                    'Year': year,
+                    'Fuel': fuel,
+                    'Consumption': consumption,
+                    'Unit_Price': fuel_price,
+                    'Total_Cost': cost
+                })
+    
+    # Create DataFrame from results
+    if fuel_costs_data:
+        fuel_costs_df = pd.DataFrame(fuel_costs_data)
+        
+        # Also create a summary by scenario and year
+        summary_data = []
+        for scenario in scenarios:
+            scenario_data = fuel_costs_df[fuel_costs_df['Scenario'] == scenario]
+            for year in scenario_data['Year'].unique():
+                year_data = scenario_data[scenario_data['Year'] == year]
+                total_cost = year_data['Total_Cost'].sum()
+                
+                summary_data.append({
+                    'Scenario': scenario,
+                    'Year': year,
+                    'Total_Fuel_Cost': total_cost
+                })
+        
+        # Append summary to the bottom with a separator row
+        if summary_data:
+            summary_df = pd.DataFrame(summary_data)
+            separator = pd.DataFrame([{col: '' for col in fuel_costs_df.columns}])
+            summary_header = pd.DataFrame([{'Scenario': 'SUMMARY', 'System': '', 'Year': '', 'Fuel': '', 
+                                           'Consumption': '', 'Unit_Price': '', 'Total_Cost': ''}])
+            
+            # Add columns to summary_df to match fuel_costs_df
+            for col in fuel_costs_df.columns:
+                if col not in summary_df.columns:
+                    summary_df[col] = ''
+            
+            # Ensure Total_Cost column exists in summary_df
+            if 'Total_Cost' in fuel_costs_df.columns and 'Total_Fuel_Cost' in summary_df.columns:
+                summary_df['Total_Cost'] = summary_df['Total_Fuel_Cost']
+                summary_df = summary_df.drop(columns=['Total_Fuel_Cost'])
+            
+            fuel_costs_df = pd.concat([fuel_costs_df, separator, summary_header, summary_df], ignore_index=True)
+        
+        return fuel_costs_df
+    else:
+        return pd.DataFrame()  # Return empty DataFrame if no data
 
 def add_color_coding(excel_file, scenarios=None):
     """
@@ -116,6 +234,10 @@ def add_color_coding(excel_file, scenarios=None):
         left=Side(style='thin'), right=Side(style='thin'),
         top=Side(style='thin'), bottom=Side(style='thin')
     )
+    
+    # Define summary style
+    summary_fill = PatternFill(start_color="FFD8E4BC", end_color="FFD8E4BC", fill_type='solid')
+    summary_font = Font(bold=True)
     
     # Load the workbook
     try:
@@ -155,10 +277,19 @@ def add_color_coding(excel_file, scenarios=None):
             if scenario_col is None:
                 continue  # Skip if no Scenario column
                 
-            # Apply colors based on scenario value
+            # Apply colors based on scenario value and handle summary rows
             for row_idx, row in enumerate(ws.iter_rows(min_row=2), 2):
                 cell = row[scenario_col-1]  # Convert to 0-based index
-                if cell.value in scenario_colors:
+                
+                # Check if this is a summary row
+                if cell.value == 'SUMMARY':
+                    # Apply summary styling
+                    for c in row:
+                        c.fill = summary_fill
+                        c.font = summary_font
+                        c.border = thin_border
+                elif cell.value in scenario_colors:
+                    # Apply scenario color
                     fill = PatternFill(start_color=scenario_colors[cell.value], 
                                       end_color=scenario_colors[cell.value], 
                                       fill_type='solid')
@@ -222,6 +353,52 @@ def create_summary_charts(excel_file, scenarios):
             'Total_OPEX',
             'Total_Cost'
         ]
+        
+        # Add fuel cost if available
+        if 'Fuel_Costs' in wb.sheetnames:
+            metrics.append('Total_Fuel_Cost')
+            
+            # Try to extract fuel cost data
+            try:
+                ws_fuel_costs = wb['Fuel_Costs']
+                fuel_cost_data = {}
+                
+                # Find the summary section
+                in_summary = False
+                for row in ws_fuel_costs.iter_rows(min_row=1):
+                    if row[0].value == 'SUMMARY':
+                        in_summary = True
+                        continue
+                    
+                    if in_summary and row[0].value in scenarios:
+                        scenario = row[0].value
+                        year = row[2].value  # Assuming Year is in column C
+                        cost = row[6].value  # Assuming Total_Cost is in column G
+                        
+                        if scenario not in fuel_cost_data:
+                            fuel_cost_data[scenario] = {}
+                        
+                        if year is not None and cost is not None:
+                            fuel_cost_data[scenario][year] = cost
+                
+                # Add fuel cost data to Global_Summary for charting
+                if fuel_cost_data:
+                    # Find the last column to add fuel cost
+                    last_col = len(header_row) + 1
+                    ws_global.cell(row=1, column=last_col, value='Total_Fuel_Cost')
+                    
+                    # Add data for each row
+                    for row_idx, row in enumerate(ws_global.iter_rows(min_row=2), 2):
+                        scenario = row[col_indices['Scenario']].value
+                        year = row[col_indices['Year']].value
+                        
+                        if scenario in fuel_cost_data and year in fuel_cost_data[scenario]:
+                            ws_global.cell(row=row_idx, column=last_col, value=fuel_cost_data[scenario][year])
+                    
+                    # Update col_indices
+                    col_indices['Total_Fuel_Cost'] = last_col - 1
+            except Exception as e:
+                print(f"Error adding fuel cost data to charts: {str(e)}")
         
         # Create data for each metric
         row_offset = 3
@@ -303,7 +480,8 @@ def compare_scenarios(input_files, output_file, metrics_to_compare=None):
             'Global_Emission_Intensity',
             'Total_CAPEX',
             'Total_OPEX',
-            'Total_Cost'
+            'Total_Cost',
+            'Total_Fuel_Cost'  # Added fuel cost
         ]
     
     # First merge the files
@@ -337,6 +515,39 @@ def compare_scenarios(input_files, output_file, metrics_to_compare=None):
         
         # Read Global_Summary data
         df = pd.read_excel(output_file, sheet_name='Global_Summary')
+        
+        # If we have fuel costs, try to add them to the comparison
+        if 'Fuel_Costs' in wb.sheetnames and 'Total_Fuel_Cost' not in df.columns:
+            try:
+                fuel_costs_df = pd.read_excel(output_file, sheet_name='Fuel_Costs')
+                
+                # Extract summary data
+                summary_data = fuel_costs_df[fuel_costs_df['Scenario'] != '']
+                summary_data = summary_data[summary_data['Scenario'] != 'SUMMARY']
+                
+                # Create a pivot table of fuel costs by scenario and year
+                if 'Total_Cost' in summary_data.columns:
+                    fuel_cost_pivot = summary_data.pivot_table(
+                        values='Total_Cost', 
+                        index=['Scenario', 'Year'], 
+                        aggfunc='sum'
+                    ).reset_index()
+                    
+                    # Rename column
+                    fuel_cost_pivot.rename(columns={'Total_Cost': 'Total_Fuel_Cost'}, inplace=True)
+                    
+                    # Merge with the Global_Summary data
+                    df = pd.merge(
+                        df, 
+                        fuel_cost_pivot,
+                        on=['Scenario', 'Year'],
+                        how='left'
+                    )
+                    
+                    # Fill NaN values with 0
+                    df['Total_Fuel_Cost'].fillna(0, inplace=True)
+            except Exception as e:
+                print(f"Error adding fuel costs to comparison: {str(e)}")
         
         # Get unique scenarios and years
         scenarios = df['Scenario'].unique().tolist()
@@ -388,7 +599,7 @@ def compare_scenarios(input_files, output_file, metrics_to_compare=None):
                     
                     if diffs:
                         avg_diff = sum(diffs) / len(diffs)
-                        ws_compare.cell(row=diff_row, column=2+scen_idx, value=avg_diff)
+                        ws_compare.cell(row=diff_row, column=2+scen_idx, value=avg_diff/100)  # Convert to decimal for percentage format
                         # Format as percentage
                         ws_compare.cell(row=diff_row, column=2+scen_idx).number_format = '0.00%'
             
@@ -429,17 +640,18 @@ if __name__ == "__main__":
     # Output file
     output_file = 'merged_results.xlsx'
     
-    # Merge the files
-    merge_excel_files(input_files, output_file)
+    # Merge the files with fuel cost calculation
+    merge_excel_files(input_files, output_file, calculate_fuel_costs=True)
     
-    # Create a focused comparison of key metrics
+    # Create a focused comparison of key metrics including fuel costs
     key_metrics = [
         'Total_Emissions', 
         'Total_Production', 
         'Global_Emission_Intensity',
         'Total_CAPEX',
         'Total_OPEX',
-        'Total_Cost'
+        'Total_Cost',
+        'Total_Fuel_Cost'
     ]
     
     compare_scenarios(input_files, 'scenario_comparison.xlsx', key_metrics)

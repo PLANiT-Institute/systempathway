@@ -47,7 +47,6 @@ def main(file_path, **kwargs):
     # Additional metrics based on reference code
     annual_global_capex = {yr: 0.0 for yr in model.years}
     annual_global_opex = {yr: 0.0 for yr in model.years}
-    annual_global_renewal_cost = {yr: 0.0 for yr in model.years}  # Added renewal cost tracking
     annual_global_fuel_consumption = {yr: {fuel: 0.0 for fuel in model.fuels} for yr in model.years}
     annual_global_tech_adoption = {yr: {tech: 0 for tech in model.technologies} for yr in model.years}
     
@@ -63,21 +62,29 @@ def main(file_path, **kwargs):
                 fuel_prices[row['fuel']] = row['cost']
     
     # If no fuel prices found in data, use default values
-
+    if not fuel_prices:
+        print("Warning: No fuel cost data found in input file. Using default fuel prices.")
+        fuel_prices = {
+            'coal': 100,       # $/ton
+            'natural_gas': 5,  # $/MMBtu
+            'electricity': 70, # $/MWh
+            'hydrogen': 5,     # $/kg
+            'biomass': 120,    # $/ton
+            'oil': 80,         # $/barrel
+            'coke': 300,       # $/ton
+            'COG': 4,          # $/MMBtu
+            'BFG': 2,          # $/MMBtu
+            'BOFG': 3,         # $/MMBtu
+        }
+    else:
+        print("Loaded fuel prices from input data:")
+        for fuel, price in fuel_prices.items():
+            print(f"  {fuel}: ${price}")
+    
     # Try to initialize feedstock consumption if the model has feedstocks
     annual_global_feedstock_consumption = {}
     if hasattr(model, 'feedstocks'):
         annual_global_feedstock_consumption = {yr: {feedstock: 0.0 for feedstock in model.feedstocks} for yr in model.years}
-
-    # Track system-level costs
-    system_costs = {}
-    for sys in model.systems:
-        system_costs[sys] = {
-            'capex': {yr: 0.0 for yr in model.years},
-            'opex': {yr: 0.0 for yr in model.years},
-            'renewal': {yr: 0.0 for yr in model.years},
-            'fuel': {yr: 0.0 for yr in model.years}
-        }
 
     # Calculate emissions and production for each system
     for sys in model.systems:
@@ -116,9 +123,6 @@ def main(file_path, **kwargs):
                         fuel_cost = fuel_amount * fuel_price
                         annual_global_fuel_cost[yr][fuel] += fuel_cost
                         annual_global_total_fuel_cost[yr] += fuel_cost
-                        
-                        # Add to system-level fuel cost
-                        system_costs[sys]['fuel'][yr] += fuel_cost
                 except:
                     pass
             
@@ -133,426 +137,21 @@ def main(file_path, **kwargs):
                     except:
                         pass
             
-            # DIRECTLY EXTRACT COSTS FROM THE OPTIMIZATION MODEL VARIABLES
-            # These are the actual costs used in the objective function
-            for tech in model.technologies:
-                try:
-                    # Extract CAPEX from replace_prod_active
-                    if hasattr(model, 'replace_prod_active') and hasattr(model, 'capex_param'):
-                        if (tech, yr) in model.capex_param and (sys, tech, yr) in model.replace_prod_active:
-                            capex = value(model.capex_param[tech, yr] * model.replace_prod_active[sys, tech, yr])
-                            system_costs[sys]['capex'][yr] += capex
-                            annual_global_capex[yr] += capex
-                            print(f"Added direct CAPEX for system {sys}, tech {tech}, year {yr}: {capex}")
-                    
-                    # Extract RENEWAL cost from renew_prod_active
-                    if hasattr(model, 'renew_prod_active') and hasattr(model, 'renewal_param'):
-                        if (tech, yr) in model.renewal_param and (sys, tech, yr) in model.renew_prod_active:
-                            renewal = value(model.renewal_param[tech, yr] * model.renew_prod_active[sys, tech, yr])
-                            system_costs[sys]['renewal'][yr] += renewal
-                            annual_global_renewal_cost[yr] += renewal
-                            print(f"Added direct RENEWAL cost for system {sys}, tech {tech}, year {yr}: {renewal}")
-                    
-                    # Extract OPEX from prod_active
-                    if hasattr(model, 'prod_active') and hasattr(model, 'opex_param'):
-                        if (tech, yr) in model.opex_param and (sys, tech, yr) in model.prod_active:
-                            opex = value(model.opex_param[tech, yr] * model.prod_active[sys, tech, yr])
-                            system_costs[sys]['opex'][yr] += opex
-                            annual_global_opex[yr] += opex
-                            print(f"Added direct OPEX for system {sys}, tech {tech}, year {yr}: {opex}")
-                except Exception as e:
-                    print(f"Error extracting direct costs for system {sys}, tech {tech}, year {yr}: {e}")
-    
-    # Print the model's variable names to help diagnose what's available
-    print("\n=== Model Variables ===")
-    var_names = [name for name in dir(model) if not name.startswith('_') and isinstance(getattr(model, name), pyomo.environ.Var)]
-    print("Variable names:", var_names)
-    
-    # Print the model's parameter names to help diagnose what's available
-    print("\n=== Model Parameters ===")
-    param_names = [name for name in dir(model) if not name.startswith('_') and isinstance(getattr(model, name), pyomo.environ.Param)]
-    print("Parameter names:", param_names)
-    
-    # Print the first few indices of key parameters to understand their structure
-    for param_name in ['capex_param', 'opex_param', 'renewal_param']:
-        if hasattr(model, param_name):
-            param = getattr(model, param_name)
+            # Add cost data
             try:
-                indices = list(param.keys())
-                if indices:
-                    print(f"Parameter {param_name} has indices like: {indices[:3]}")
-                    # For the first index, print the value
-                    first_idx = indices[0]
-                    print(f"  Value at {first_idx}: {value(param[first_idx])}")
+                # Try to get CAPEX
+                if hasattr(model, 'capex') and yr in model.capex:
+                    annual_global_capex[yr] += value(model.capex[yr])
+                elif hasattr(model, 'capex_cost') and yr in model.capex_cost:
+                    annual_global_capex[yr] += value(model.capex_cost[yr])
+                
+                # Try to get OPEX
+                if hasattr(model, 'opex') and yr in model.opex:
+                    annual_global_opex[yr] += value(model.opex[yr])
+                elif hasattr(model, 'opex_cost') and yr in model.opex_cost:
+                    annual_global_opex[yr] += value(model.opex_cost[yr])
             except:
                 pass
-    
-    # Extract cost data from the model - more comprehensive approach
-    # Try multiple possible variable names for each cost type
-    
-    # CAPEX - Try technology-level first, then system-level, then global
-    try:
-        # First check if we have technology-specific CAPEX variables
-        if hasattr(model, 'capex_tech'):
-            print("Found capex_tech variable")
-            for sys in model.systems:
-                for tech in model.technologies:
-                    for yr in model.years:
-                        try:
-                            if (sys, tech, yr) in model.capex_tech:
-                                tech_capex = value(model.capex_tech[sys, tech, yr])
-                                system_costs[sys]['capex'][yr] += tech_capex
-                                annual_global_capex[yr] += tech_capex
-                        except:
-                            pass
-        elif hasattr(model, 'technology_capex'):
-            print("Found technology_capex variable")
-            for sys in model.systems:
-                for tech in model.technologies:
-                    for yr in model.years:
-                        try:
-                            if (sys, tech, yr) in model.technology_capex:
-                                tech_capex = value(model.technology_capex[sys, tech, yr])
-                                system_costs[sys]['capex'][yr] += tech_capex
-                                annual_global_capex[yr] += tech_capex
-                        except:
-                            pass
-        
-        # Check for any variable that might contain CAPEX information
-        for var_name in var_names:
-            if 'capex' in var_name.lower() and var_name not in ['capex_tech', 'technology_capex', 'system_capex', 'capex_system', 'capex', 'capex_cost']:
-                print(f"Found potential CAPEX variable: {var_name}")
-                var = getattr(model, var_name)
-                try:
-                    for idx in var.keys():
-                        # Try to determine if this is a system-year index
-                        if isinstance(idx, tuple) and len(idx) == 2:
-                            sys_candidate, yr_candidate = idx
-                            if sys_candidate in model.systems and yr_candidate in model.years:
-                                system_costs[sys_candidate]['capex'][yr_candidate] += value(var[idx])
-                                annual_global_capex[yr_candidate] += value(var[idx])
-                                print(f"  Added CAPEX for system {sys_candidate}, year {yr_candidate}: {value(var[idx])}")
-                        # Try to determine if this is a system-tech-year index
-                        elif isinstance(idx, tuple) and len(idx) == 3:
-                            sys_candidate, tech_candidate, yr_candidate = idx
-                            if sys_candidate in model.systems and tech_candidate in model.technologies and yr_candidate in model.years:
-                                system_costs[sys_candidate]['capex'][yr_candidate] += value(var[idx])
-                                annual_global_capex[yr_candidate] += value(var[idx])
-                                print(f"  Added CAPEX for system {sys_candidate}, tech {tech_candidate}, year {yr_candidate}: {value(var[idx])}")
-                except Exception as e:
-                    print(f"  Error processing {var_name}: {e}")
-        
-        # Then check for system-level CAPEX again (in case we missed any)
-        if hasattr(model, 'capex_by_system'):
-            print("Found capex_by_system variable")
-            for sys in model.systems:
-                for yr in model.years:
-                    try:
-                        if (sys, yr) in model.capex_by_system:
-                            system_capex = value(model.capex_by_system[sys, yr])
-                            # Only add if we haven't already counted this
-                            if system_costs[sys]['capex'][yr] == 0:
-                                system_costs[sys]['capex'][yr] += system_capex
-                                annual_global_capex[yr] += system_capex
-                    except:
-                        pass
-        
-        # Finally check for global CAPEX
-        if hasattr(model, 'capex'):
-            print("Found global capex variable")
-            # Global CAPEX
-            for yr in model.years:
-                try:
-                    if yr in model.capex:
-                        # Only add if we haven't already counted this
-                        if annual_global_capex[yr] == 0:
-                            annual_global_capex[yr] = value(model.capex[yr])
-                except:
-                    pass
-        elif hasattr(model, 'capex_cost'):
-            print("Found global capex_cost variable")
-            # Alternative global CAPEX
-            for yr in model.years:
-                try:
-                    if yr in model.capex_cost:
-                        # Only add if we haven't already counted this
-                        if annual_global_capex[yr] == 0:
-                            annual_global_capex[yr] = value(model.capex_cost[yr])
-                except:
-                    pass
-        
-        # If we have global CAPEX but no system breakdown, distribute based on production
-        if any(annual_global_capex[yr] > 0 for yr in model.years) and all(system_costs[sys]['capex'][yr] == 0 for sys in model.systems for yr in model.years):
-            print("Distributing global CAPEX to systems based on production share")
-            for yr in model.years:
-                total_production = sum(value(model.production[sys, yr]) for sys in model.systems)
-                if total_production > 0:
-                    for sys in model.systems:
-                        production_share = value(model.production[sys, yr]) / total_production
-                        system_costs[sys]['capex'][yr] = annual_global_capex[yr] * production_share
-    except Exception as e:
-        print(f"Error extracting CAPEX data: {e}")
-    
-    # OPEX - Similar comprehensive approach as CAPEX
-    try:
-        # First check if we have technology-specific OPEX variables
-        if hasattr(model, 'opex_tech'):
-            print("Found opex_tech variable")
-            for sys in model.systems:
-                for tech in model.technologies:
-                    for yr in model.years:
-                        try:
-                            if (sys, tech, yr) in model.opex_tech:
-                                tech_opex = value(model.opex_tech[sys, tech, yr])
-                                system_costs[sys]['opex'][yr] += tech_opex
-                                annual_global_opex[yr] += tech_opex
-                        except:
-                            pass
-        elif hasattr(model, 'technology_opex'):
-            print("Found technology_opex variable")
-            for sys in model.systems:
-                for tech in model.technologies:
-                    for yr in model.years:
-                        try:
-                            if (sys, tech, yr) in model.technology_opex:
-                                tech_opex = value(model.technology_opex[sys, tech, yr])
-                                system_costs[sys]['opex'][yr] += tech_opex
-                                annual_global_opex[yr] += tech_opex
-                        except:
-                            pass
-        
-        # Check for any variable that might contain OPEX information
-        for var_name in var_names:
-            if 'opex' in var_name.lower() and var_name not in ['opex_tech', 'technology_opex', 'system_opex', 'opex_system', 'opex', 'opex_cost']:
-                print(f"Found potential OPEX variable: {var_name}")
-                var = getattr(model, var_name)
-                try:
-                    for idx in var.keys():
-                        # Try to determine if this is a system-year index
-                        if isinstance(idx, tuple) and len(idx) == 2:
-                            sys_candidate, yr_candidate = idx
-                            if sys_candidate in model.systems and yr_candidate in model.years:
-                                system_costs[sys_candidate]['opex'][yr_candidate] += value(var[idx])
-                                annual_global_opex[yr_candidate] += value(var[idx])
-                                print(f"  Added OPEX for system {sys_candidate}, year {yr_candidate}: {value(var[idx])}")
-                        # Try to determine if this is a system-tech-year index
-                        elif isinstance(idx, tuple) and len(idx) == 3:
-                            sys_candidate, tech_candidate, yr_candidate = idx
-                            if sys_candidate in model.systems and tech_candidate in model.technologies and yr_candidate in model.years:
-                                system_costs[sys_candidate]['opex'][yr_candidate] += value(var[idx])
-                                annual_global_opex[yr_candidate] += value(var[idx])
-                                print(f"  Added OPEX for system {sys_candidate}, tech {tech_candidate}, year {yr_candidate}: {value(var[idx])}")
-                except Exception as e:
-                    print(f"  Error processing {var_name}: {e}")
-        
-        # Then check for system-level OPEX again
-        if hasattr(model, 'opex_by_system'):
-            print("Found opex_by_system variable")
-            for sys in model.systems:
-                for yr in model.years:
-                    try:
-                        if (sys, yr) in model.opex_by_system:
-                            system_opex = value(model.opex_by_system[sys, yr])
-                            # Only add if we haven't already counted this
-                            if system_costs[sys]['opex'][yr] == 0:
-                                system_costs[sys]['opex'][yr] += system_opex
-                                annual_global_opex[yr] += system_opex
-                    except:
-                        pass
-        
-        # Finally check for global OPEX
-        if hasattr(model, 'opex'):
-            print("Found global opex variable")
-            # Global OPEX
-            for yr in model.years:
-                try:
-                    if yr in model.opex:
-                        # Only add if we haven't already counted this
-                        if annual_global_opex[yr] == 0:
-                            annual_global_opex[yr] = value(model.opex[yr])
-                except:
-                    pass
-        elif hasattr(model, 'opex_cost'):
-            print("Found global opex_cost variable")
-            # Alternative global OPEX
-            for yr in model.years:
-                try:
-                    if yr in model.opex_cost:
-                        # Only add if we haven't already counted this
-                        if annual_global_opex[yr] == 0:
-                            annual_global_opex[yr] = value(model.opex_cost[yr])
-                except:
-                    pass
-        
-        # If we have global OPEX but no system breakdown, distribute based on production
-        if any(annual_global_opex[yr] > 0 for yr in model.years) and all(system_costs[sys]['opex'][yr] == 0 for sys in model.systems for yr in model.years):
-            print("Distributing global OPEX to systems based on production share")
-            for yr in model.years:
-                total_production = sum(value(model.production[sys, yr]) for sys in model.systems)
-                if total_production > 0:
-                    for sys in model.systems:
-                        production_share = value(model.production[sys, yr]) / total_production
-                        system_costs[sys]['opex'][yr] = annual_global_opex[yr] * production_share
-    except Exception as e:
-        print(f"Error extracting OPEX data: {e}")
-    
-    # RENEWAL costs - Similar comprehensive approach
-    try:
-        # First check if we have technology-specific renewal cost variables
-        if hasattr(model, 'renewal_cost_tech'):
-            print("Found renewal_cost_tech variable")
-            for sys in model.systems:
-                for tech in model.technologies:
-                    for yr in model.years:
-                        try:
-                            if (sys, tech, yr) in model.renewal_cost_tech:
-                                tech_renewal = value(model.renewal_cost_tech[sys, tech, yr])
-                                system_costs[sys]['renewal'][yr] += tech_renewal
-                                annual_global_renewal_cost[yr] += tech_renewal
-                        except:
-                            pass
-        elif hasattr(model, 'technology_renewal_cost'):
-            print("Found technology_renewal_cost variable")
-            for sys in model.systems:
-                for tech in model.technologies:
-                    for yr in model.years:
-                        try:
-                            if (sys, tech, yr) in model.technology_renewal_cost:
-                                tech_renewal = value(model.technology_renewal_cost[sys, tech, yr])
-                                system_costs[sys]['renewal'][yr] += tech_renewal
-                                annual_global_renewal_cost[yr] += tech_renewal
-                        except:
-                            pass
-        
-        # Check for any variable that might contain renewal cost information
-        for var_name in var_names:
-            if ('renewal' in var_name.lower() or 'renew_cost' in var_name.lower()) and var_name not in ['renewal_cost_tech', 'technology_renewal_cost', 'system_renewal_cost', 'renewal_cost_system', 'renewal_cost']:
-                print(f"Found potential renewal cost variable: {var_name}")
-                var = getattr(model, var_name)
-                try:
-                    for idx in var.keys():
-                        # Try to determine if this is a system-year index
-                        if isinstance(idx, tuple) and len(idx) == 2:
-                            sys_candidate, yr_candidate = idx
-                            if sys_candidate in model.systems and yr_candidate in model.years:
-                                system_costs[sys_candidate]['renewal'][yr_candidate] += value(var[idx])
-                                annual_global_renewal_cost[yr_candidate] += value(var[idx])
-                                print(f"  Added renewal cost for system {sys_candidate}, year {yr_candidate}: {value(var[idx])}")
-                        # Try to determine if this is a system-tech-year index
-                        elif isinstance(idx, tuple) and len(idx) == 3:
-                            sys_candidate, tech_candidate, yr_candidate = idx
-                            if sys_candidate in model.systems and tech_candidate in model.technologies and yr_candidate in model.years:
-                                system_costs[sys_candidate]['renewal'][yr_candidate] += value(var[idx])
-                                annual_global_renewal_cost[yr_candidate] += value(var[idx])
-                                print(f"  Added renewal cost for system {sys_candidate}, tech {tech_candidate}, year {yr_candidate}: {value(var[idx])}")
-                except Exception as e:
-                    print(f"  Error processing {var_name}: {e}")
-        
-        # Then check for system-level renewal costs again
-        if hasattr(model, 'renewal_cost_by_system'):
-            print("Found renewal_cost_by_system variable")
-            for sys in model.systems:
-                for yr in model.years:
-                    try:
-                        if (sys, yr) in model.renewal_cost_by_system:
-                            system_renewal = value(model.renewal_cost_by_system[sys, yr])
-                            # Only add if we haven't already counted this
-                            if system_costs[sys]['renewal'][yr] == 0:
-                                system_costs[sys]['renewal'][yr] += system_renewal
-                                annual_global_renewal_cost[yr] += system_renewal
-                    except:
-                        pass
-        
-        # Finally check for global renewal costs
-        if hasattr(model, 'renewal_cost'):
-            print("Found global renewal_cost variable")
-            # Global renewal cost
-            for yr in model.years:
-                try:
-                    if yr in model.renewal_cost:
-                        # Only add if we haven't already counted this
-                        if annual_global_renewal_cost[yr] == 0:
-                            annual_global_renewal_cost[yr] = value(model.renewal_cost[yr])
-                except:
-                    pass
-        
-        # If no direct renewal cost variable, try to calculate from renewal decisions
-        if all(annual_global_renewal_cost[yr] == 0 for yr in model.years) and hasattr(model, 'renew'):
-            print("Calculating renewal costs from renewal decisions")
-            # Try to get renewal unit costs
-            renewal_unit_costs = {}
-            if hasattr(model, 'renewal_unit_cost'):
-                for tech in model.technologies:
-                    try:
-                        renewal_unit_costs[tech] = value(model.renewal_unit_cost[tech])
-                    except:
-                        pass
-            elif hasattr(model, 'tech_renewal_cost'):
-                for tech in model.technologies:
-                    try:
-                        renewal_unit_costs[tech] = value(model.tech_renewal_cost[tech])
-                    except:
-                        pass
-            
-            # If we have renewal unit costs, calculate renewal costs
-            if renewal_unit_costs:
-                for sys in model.systems:
-                    for tech in model.technologies:
-                        for yr in model.years:
-                            try:
-                                if (sys, tech, yr) in model.renew:
-                                    renewal_decision = value(model.renew[sys, tech, yr])
-                                    if renewal_decision > 0.001 and tech in renewal_unit_costs:
-                                        renewal_cost = renewal_decision * renewal_unit_costs[tech]
-                                        system_costs[sys]['renewal'][yr] += renewal_cost
-                                        annual_global_renewal_cost[yr] += renewal_cost
-                            except:
-                                pass
-        
-        # If we have global renewal costs but no system breakdown, distribute based on production
-        if any(annual_global_renewal_cost[yr] > 0 for yr in model.years) and all(system_costs[sys]['renewal'][yr] == 0 for sys in model.systems for yr in model.years):
-            print("Distributing global renewal costs to systems based on production share")
-            for yr in model.years:
-                total_production = sum(value(model.production[sys, yr]) for sys in model.systems)
-                if total_production > 0:
-                    for sys in model.systems:
-                        production_share = value(model.production[sys, yr]) / total_production
-                        system_costs[sys]['renewal'][yr] = annual_global_renewal_cost[yr] * production_share
-    except Exception as e:
-        print(f"Error extracting RENEWAL cost data: {e}")
-    
-    # Print a summary of cost extraction
-    print("\n=== Cost Extraction Summary ===")
-    for yr in model.years:
-        print(f"\nYear {yr} costs:")
-        print(f"  CAPEX: {annual_global_capex[yr]:.2f}")
-        print(f"  OPEX: {annual_global_opex[yr]:.2f}")
-        print(f"  Renewal: {annual_global_renewal_cost[yr]:.2f}")
-        print(f"  Fuel: {annual_global_total_fuel_cost[yr]:.2f}")
-        print(f"  Total: {annual_global_capex[yr] + annual_global_opex[yr] + annual_global_renewal_cost[yr] + annual_global_total_fuel_cost[yr]:.2f}")
-    
-    # Print system-level costs for verification
-    print("\n=== System-Level Cost Summary ===")
-    for sys in model.systems:
-        print(f"\nSystem: {sys}")
-        for yr in model.years:
-            print(f"  Year {yr}:")
-            print(f"    CAPEX: {system_costs[sys]['capex'][yr]:.2f}")
-            print(f"    OPEX: {system_costs[sys]['opex'][yr]:.2f}")
-            print(f"    Renewal: {system_costs[sys]['renewal'][yr]:.2f}")
-            print(f"    Fuel: {system_costs[sys]['fuel'][yr]:.2f}")
-            print(f"    Total: {system_costs[sys]['capex'][yr] + system_costs[sys]['opex'][yr] + system_costs[sys]['renewal'][yr] + system_costs[sys]['fuel'][yr]:.2f}")
-    
-    # If we couldn't extract any cost data, print a warning
-    if all(annual_global_capex[yr] == 0 for yr in model.years):
-        print("\nWARNING: Could not extract any CAPEX data from the model.")
-        print("Available model attributes:", [attr for attr in dir(model) if not attr.startswith('_')])
-    
-    if all(annual_global_opex[yr] == 0 for yr in model.years):
-        print("\nWARNING: Could not extract any OPEX data from the model.")
-    
-    if all(annual_global_renewal_cost[yr] == 0 for yr in model.years):
-        print("\nWARNING: Could not extract any RENEWAL cost data from the model.")
 
     # Print results
     print("\n=== Annual Global Results ===")
@@ -562,24 +161,15 @@ def main(file_path, **kwargs):
         print(f"Total Production: {annual_global_production[yr]:.2f}")
         if annual_global_production[yr] > 0:
             print(f"Emission Intensity: {annual_global_total_emissions[yr]/annual_global_production[yr]:.4f}")
-        
-        # Print cost breakdown
-        print(f"CAPEX: {annual_global_capex[yr]:.2f}")
-        print(f"OPEX: {annual_global_opex[yr]:.2f}")
-        print(f"Renewal Cost: {annual_global_renewal_cost[yr]:.2f}")
-        print(f"Fuel Cost: {annual_global_total_fuel_cost[yr]:.2f}")
-        
-        # Calculate total cost including renewal
-        total_cost = annual_global_capex[yr] + annual_global_opex[yr] + annual_global_renewal_cost[yr] + annual_global_total_fuel_cost[yr]
-        print(f"Total Cost: {total_cost:.2f}")
+        print(f"Total Fuel Cost: {annual_global_total_fuel_cost[yr]:.2f}")
         
         # Calculate and print cost intensity
+        total_cost = annual_global_capex[yr] + annual_global_opex[yr] + annual_global_total_fuel_cost[yr]
         if annual_global_production[yr] > 0:
             cost_intensity = total_cost / annual_global_production[yr]
             print(f"Cost Intensity: {cost_intensity:.2f} $/unit")
             print(f"  CAPEX Intensity: {annual_global_capex[yr]/annual_global_production[yr]:.2f} $/unit")
             print(f"  OPEX Intensity: {annual_global_opex[yr]/annual_global_production[yr]:.2f} $/unit")
-            print(f"  Renewal Intensity: {annual_global_renewal_cost[yr]/annual_global_production[yr]:.2f} $/unit")
             print(f"  Fuel Cost Intensity: {annual_global_total_fuel_cost[yr]/annual_global_production[yr]:.2f} $/unit")
 
     return {
@@ -587,14 +177,12 @@ def main(file_path, **kwargs):
         "annual_global_production": annual_global_production,
         "annual_global_capex": annual_global_capex,
         "annual_global_opex": annual_global_opex,
-        "annual_global_renewal_cost": annual_global_renewal_cost,  # Added renewal cost
         "annual_global_fuel_consumption": annual_global_fuel_consumption,
         "annual_global_fuel_cost": annual_global_fuel_cost,
         "annual_global_total_fuel_cost": annual_global_total_fuel_cost,
         "annual_global_feedstock_consumption": annual_global_feedstock_consumption if hasattr(model, 'feedstocks') else {},
         "annual_global_tech_adoption": annual_global_tech_adoption,
-        "system_costs": system_costs,  # Added system-level cost breakdown
-        "fuel_prices": fuel_prices,
+        "fuel_prices": fuel_prices,  # Add fuel prices to the output
         "model": model,
         "result": result,
         "data": data
@@ -902,8 +490,7 @@ def save_results_to_excel(output, output_file='results_global.xlsx'):
     print(f"\n=== Saving results to {output_file} ===")
     
     model = output["model"]
-    fuel_prices = output["fuel_prices"]
-    system_costs = output["system_costs"]
+    fuel_prices = output["fuel_prices"]  # Get fuel prices from output
     
     # Create a new Excel writer
     writer = pd.ExcelWriter(output_file, engine='openpyxl')
@@ -922,26 +509,6 @@ def save_results_to_excel(output, output_file='results_global.xlsx'):
             row_data["Emissions"] = system_emissions
             row_data["Emission_Intensity"] = system_emissions / row_data["Production"] if row_data["Production"] > 0 else 0
             
-            # Add system costs
-            row_data["CAPEX"] = system_costs[sys]['capex'][yr]
-            row_data["OPEX"] = system_costs[sys]['opex'][yr]
-            row_data["Renewal_Cost"] = system_costs[sys]['renewal'][yr]
-            row_data["Fuel_Cost"] = system_costs[sys]['fuel'][yr]
-            row_data["Total_Cost"] = (
-                system_costs[sys]['capex'][yr] + 
-                system_costs[sys]['opex'][yr] + 
-                system_costs[sys]['renewal'][yr] + 
-                system_costs[sys]['fuel'][yr]
-            )
-            
-            # Add cost intensity if production is non-zero
-            if row_data["Production"] > 0:
-                row_data["Cost_Intensity"] = row_data["Total_Cost"] / row_data["Production"]
-                row_data["CAPEX_Intensity"] = system_costs[sys]['capex'][yr] / row_data["Production"]
-                row_data["OPEX_Intensity"] = system_costs[sys]['opex'][yr] / row_data["Production"]
-                row_data["Renewal_Intensity"] = system_costs[sys]['renewal'][yr] / row_data["Production"]
-                row_data["Fuel_Cost_Intensity"] = system_costs[sys]['fuel'][yr] / row_data["Production"]
-            
             # Technology use
             active_techs = []
             for tech in model.technologies:
@@ -956,7 +523,8 @@ def save_results_to_excel(output, output_file='results_global.xlsx'):
             
             row_data["Active_Technologies"] = ", ".join(active_techs)
             
-            # Fuel consumption
+            # Fuel consumption and costs
+            system_fuel_cost = 0
             for fuel in model.fuels:
                 try:
                     fuel_amount = 0
@@ -967,8 +535,35 @@ def save_results_to_excel(output, output_file='results_global.xlsx'):
                     
                     if fuel_amount > 0.001:
                         row_data[f"Fuel_{fuel}"] = fuel_amount
+                        
+                        # Add fuel cost if we have it
+                        if yr in output["annual_global_fuel_cost"] and fuel in output["annual_global_fuel_cost"][yr]:
+                            # Calculate per-system fuel cost based on consumption proportion
+                            global_fuel_consumption = output["annual_global_fuel_consumption"][yr][fuel]
+                            if global_fuel_consumption > 0:
+                                proportion = fuel_amount / global_fuel_consumption
+                                fuel_cost = proportion * output["annual_global_fuel_cost"][yr][fuel]
+                                row_data[f"Fuel_Cost_{fuel}"] = fuel_cost
+                                system_fuel_cost += fuel_cost
                 except:
                     pass
+            
+            # Add total fuel cost for this system
+            if system_fuel_cost > 0:
+                row_data["Total_Fuel_Cost"] = system_fuel_cost
+            
+            # Calculate system cost intensity if we have production
+            if row_data["Production"] > 0:
+                # Estimate system CAPEX and OPEX based on production proportion
+                if output["annual_global_production"][yr] > 0:
+                    production_proportion = row_data["Production"] / output["annual_global_production"][yr]
+                    system_capex = production_proportion * output["annual_global_capex"][yr]
+                    system_opex = production_proportion * output["annual_global_opex"][yr]
+                    
+                    # Calculate total system cost and cost intensity
+                    system_total_cost = system_capex + system_opex + system_fuel_cost
+                    row_data["Total_Cost"] = system_total_cost
+                    row_data["Cost_Intensity"] = system_total_cost / row_data["Production"]
             
             # Feedstock consumption if available
             if hasattr(model, 'feedstocks'):
@@ -1008,16 +603,8 @@ def save_results_to_excel(output, output_file='results_global.xlsx'):
         # Costs
         row_data["Total_CAPEX"] = output["annual_global_capex"][yr]
         row_data["Total_OPEX"] = output["annual_global_opex"][yr]
-        row_data["Total_Renewal_Cost"] = output["annual_global_renewal_cost"][yr]
         row_data["Total_Fuel_Cost"] = output["annual_global_total_fuel_cost"][yr]
-        
-        # Total cost including renewal
-        total_cost = (
-            output["annual_global_capex"][yr] + 
-            output["annual_global_opex"][yr] + 
-            output["annual_global_renewal_cost"][yr] + 
-            output["annual_global_total_fuel_cost"][yr]
-        )
+        total_cost = output["annual_global_capex"][yr] + output["annual_global_opex"][yr] + output["annual_global_total_fuel_cost"][yr]
         row_data["Total_Cost"] = total_cost
         
         # Add cost intensity (cost per unit of production)
@@ -1025,13 +612,11 @@ def save_results_to_excel(output, output_file='results_global.xlsx'):
             row_data["Cost_Intensity"] = total_cost / output["annual_global_production"][yr]
             row_data["CAPEX_Intensity"] = output["annual_global_capex"][yr] / output["annual_global_production"][yr]
             row_data["OPEX_Intensity"] = output["annual_global_opex"][yr] / output["annual_global_production"][yr]
-            row_data["Renewal_Intensity"] = output["annual_global_renewal_cost"][yr] / output["annual_global_production"][yr]
             row_data["Fuel_Cost_Intensity"] = output["annual_global_total_fuel_cost"][yr] / output["annual_global_production"][yr]
         else:
             row_data["Cost_Intensity"] = 0
             row_data["CAPEX_Intensity"] = 0
             row_data["OPEX_Intensity"] = 0
-            row_data["Renewal_Intensity"] = 0
             row_data["Fuel_Cost_Intensity"] = 0
         
         # Fuel consumption
@@ -1098,31 +683,6 @@ def save_results_to_excel(output, output_file='results_global.xlsx'):
                             tech_row['Replace'] = value(model.replace[sys, tech, yr])
                         if hasattr(model, 'renew'):
                             tech_row['Renew'] = value(model.renew[sys, tech, yr])
-                        
-                        # Add technology-specific costs if available
-                        try:
-                            if hasattr(model, 'capex_param') and (tech, yr) in model.capex_param:
-                                tech_row['CAPEX_Rate'] = value(model.capex_param[tech, yr])
-                                if hasattr(model, 'replace_prod_active') and (sys, tech, yr) in model.replace_prod_active:
-                                    tech_row['CAPEX'] = value(model.capex_param[tech, yr] * model.replace_prod_active[sys, tech, yr])
-                        except:
-                            pass
-                        
-                        try:
-                            if hasattr(model, 'opex_param') and (tech, yr) in model.opex_param:
-                                tech_row['OPEX_Rate'] = value(model.opex_param[tech, yr])
-                                if hasattr(model, 'prod_active') and (sys, tech, yr) in model.prod_active:
-                                    tech_row['OPEX'] = value(model.opex_param[tech, yr] * model.prod_active[sys, tech, yr])
-                        except:
-                            pass
-                        
-                        try:
-                            if hasattr(model, 'renewal_param') and (tech, yr) in model.renewal_param:
-                                tech_row['Renewal_Rate'] = value(model.renewal_param[tech, yr])
-                                if hasattr(model, 'renew_prod_active') and (sys, tech, yr) in model.renew_prod_active:
-                                    tech_row['Renewal_Cost'] = value(model.renewal_param[tech, yr] * model.renew_prod_active[sys, tech, yr])
-                        except:
-                            pass
                         
                         tech_data.append(tech_row)
                 except:
@@ -1269,9 +829,8 @@ def save_results_to_excel(output, output_file='results_global.xlsx'):
         production = output["annual_global_production"][yr]
         capex = output["annual_global_capex"][yr]
         opex = output["annual_global_opex"][yr]
-        renewal = output["annual_global_renewal_cost"][yr]
         fuel_cost = output["annual_global_total_fuel_cost"][yr]
-        total_cost = capex + opex + renewal + fuel_cost
+        total_cost = capex + opex + fuel_cost
         
         # Calculate cost intensity
         cost_intensity = total_cost / production if production > 0 else 0
@@ -1279,7 +838,6 @@ def save_results_to_excel(output, output_file='results_global.xlsx'):
         # Calculate component intensities
         capex_intensity = capex / production if production > 0 else 0
         opex_intensity = opex / production if production > 0 else 0
-        renewal_intensity = renewal / production if production > 0 else 0
         fuel_cost_intensity = fuel_cost / production if production > 0 else 0
         
         # Add to data
@@ -1292,8 +850,6 @@ def save_results_to_excel(output, output_file='results_global.xlsx'):
             'CAPEX_Intensity': capex_intensity,
             'OPEX': opex,
             'OPEX_Intensity': opex_intensity,
-            'Renewal_Cost': renewal,
-            'Renewal_Intensity': renewal_intensity,
             'Fuel_Cost': fuel_cost,
             'Fuel_Cost_Intensity': fuel_cost_intensity
         })
@@ -1314,75 +870,13 @@ def save_results_to_excel(output, output_file='results_global.xlsx'):
         fuel_prices_df = pd.DataFrame(fuel_prices_data)
         fuel_prices_df.to_excel(writer, sheet_name='Fuel_Prices', index=False)
     
-    # 9. Add a dedicated Cost Breakdown sheet
-    cost_breakdown_data = []
-    for sys in model.systems:
-        for yr in model.years:
-            cost_breakdown_data.append({
-                'System': sys,
-                'Year': yr,
-                'CAPEX': system_costs[sys]['capex'][yr],
-                'OPEX': system_costs[sys]['opex'][yr],
-                'Renewal_Cost': system_costs[sys]['renewal'][yr],
-                'Fuel_Cost': system_costs[sys]['fuel'][yr],
-                'Total_Cost': (
-                    system_costs[sys]['capex'][yr] + 
-                    system_costs[sys]['opex'][yr] + 
-                    system_costs[sys]['renewal'][yr] + 
-                    system_costs[sys]['fuel'][yr]
-                )
-            })
-    
-    if cost_breakdown_data:
-        cost_breakdown_df = pd.DataFrame(cost_breakdown_data)
-        cost_breakdown_df.to_excel(writer, sheet_name='Cost_Breakdown', index=False)
-    
-    # 10. Add a dedicated Technology Cost Parameters sheet
-    tech_cost_params = []
-    if hasattr(model, 'capex_param') or hasattr(model, 'opex_param') or hasattr(model, 'renewal_param'):
-        for tech in model.technologies:
-            for yr in model.years:
-                row = {'Technology': tech, 'Year': yr}
-                
-                # Add CAPEX parameter
-                if hasattr(model, 'capex_param'):
-                    try:
-                        if (tech, yr) in model.capex_param:
-                            row['CAPEX_Rate'] = value(model.capex_param[tech, yr])
-                    except:
-                        pass
-                
-                # Add OPEX parameter
-                if hasattr(model, 'opex_param'):
-                    try:
-                        if (tech, yr) in model.opex_param:
-                            row['OPEX_Rate'] = value(model.opex_param[tech, yr])
-                    except:
-                        pass
-                
-                # Add Renewal parameter
-                if hasattr(model, 'renewal_param'):
-                    try:
-                        if (tech, yr) in model.renewal_param:
-                            row['Renewal_Rate'] = value(model.renewal_param[tech, yr])
-                    except:
-                        pass
-                
-                # Only add row if it has at least one cost parameter
-                if len(row) > 2:
-                    tech_cost_params.append(row)
-    
-    if tech_cost_params:
-        tech_cost_params_df = pd.DataFrame(tech_cost_params)
-        tech_cost_params_df.to_excel(writer, sheet_name='Technology_Cost_Parameters', index=False)
-    
     # Save and close the Excel file
     writer.close()
     print(f"Results saved to {output_file}")
     return output_file
 
 if __name__ == "__main__":
-    file_path = 'database/steel_data_0310_global.xlsx'
+    file_path = 'database/steel_data_0310_notarget.xlsx'
     output = main(file_path, 
                  carboprice_include=False,
                  max_renew=2,
@@ -1390,4 +884,4 @@ if __name__ == "__main__":
     
     if output:
         # Save results to the specific file name
-        save_results_to_excel(output, 'results_global.xlsx')
+        save_results_to_excel(output, 'results_notarget.xlsx')
