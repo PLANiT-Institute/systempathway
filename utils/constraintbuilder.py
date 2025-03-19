@@ -96,10 +96,21 @@ def emission_constraints(model,**kwargs):
     return model
 
 def baseline_constraints(model):
-    # Ensure baseline technology is active and continued in the first year
+    # Get the first year of the model
+    first_year = min(model.years)
+    
+    # ===== EXISTING FACILITIES (introduced_year <= first model year) =====
+    
+    # Ensure baseline technology is active and continued in the first year for existing facilities
     def baseline_technology_first_year_rule(m, sys, tech, yr):
-        if yr == min(m.years) and tech == m.baseline_technology[sys]:
+        # Skip if this is not the first year or if this facility is introduced later
+        if yr != first_year or m.introduced_year_param[sys] > first_year:
+            return Constraint.Skip
+            
+        # For existing facilities in their first year, use baseline technology
+        if tech == m.baseline_technology[sys]:
             return m.continue_technology[sys, tech, yr] == 1
+            
         return Constraint.Skip
 
     model.baseline_technology_first_year_constraint = Constraint(
@@ -107,23 +118,35 @@ def baseline_constraints(model):
     )
 
     def baseline_technology_first_year_rule2(m, sys, tech, yr):
-        if yr == min(m.years) and tech == m.baseline_technology[sys]:
+        # Skip if this is not the first year or if this facility is introduced later
+        if yr != first_year or m.introduced_year_param[sys] > first_year:
+            return Constraint.Skip
+            
+        # For existing facilities in their first year, don't replace or renew baseline tech
+        if tech == m.baseline_technology[sys]:
             return m.renew[sys, tech, yr] + m.replace[sys, tech, yr] == 0
+            
         return Constraint.Skip
 
     model.baseline_technology_first_year_constraint2 = Constraint(
         model.systems, model.technologies, model.years, rule=baseline_technology_first_year_rule2
     )
 
-    # Ensure all non-baseline technologies are inactive in the first year
+    # Ensure all non-baseline technologies are inactive in the first year for existing facilities
     def non_baseline_technologies_first_year_rule(m, sys, tech, yr):
-        if yr == min(m.years) and tech != m.baseline_technology[sys]:
+        # Skip if this is not the first year or if this facility is introduced later
+        if yr != first_year or m.introduced_year_param[sys] > first_year:
+            return Constraint.Skip
+            
+        # For existing facilities in first year, non-baseline techs must be inactive
+        if tech != m.baseline_technology[sys]:
             return (
                 m.continue_technology[sys, tech, yr] +
                 m.replace[sys, tech, yr] +
                 m.renew[sys, tech, yr] +
                 m.active_technology[sys, tech, yr]
             ) == 0
+            
         return Constraint.Skip
 
     model.non_baseline_technologies_first_year_constraint = Constraint(
@@ -131,13 +154,18 @@ def baseline_constraints(model):
     )
 
     def hard_baseline_fuel_rule(m, sys, f, yr):
-        if yr == min(m.years):  # Baseline year
-            if f in m.baseline_fuels[sys]:
-                # Ensure baseline fuels are selected
-                return m.fuel_select[sys, f, yr] == 1
-            else:
-                # Ensure non-baseline fuels are not selected
-                return m.fuel_select[sys, f, yr] == 0
+        # Skip if this is not the first year or if this facility is introduced later
+        if yr != first_year or m.introduced_year_param[sys] > first_year:
+            return Constraint.Skip
+            
+        # For existing facilities in first year, enforce baseline fuels
+        if f in m.baseline_fuels[sys]:
+            # Ensure baseline fuels are selected
+            return m.fuel_select[sys, f, yr] == 1
+        else:
+            # Ensure non-baseline fuels are not selected
+            return m.fuel_select[sys, f, yr] == 0
+            
         return Constraint.Skip
 
     model.hard_baseline_fuel_constraint = Constraint(
@@ -145,15 +173,19 @@ def baseline_constraints(model):
     )
 
     def hard_baseline_feedstock_rule(m, sys, fs, yr):
-        if yr == min(m.years):  # Baseline year
-            if fs in m.baseline_feedstocks[sys]:
-                # Ensure baseline fuels are selected
-                return m.feedstock_select[sys, fs, yr] == 1
-            else:
-                # Ensure non-baseline fuels are not selected
-                return m.feedstock_select[sys, fs, yr] == 0
+        # Skip if this is not the first year or if this facility is introduced later
+        if yr != first_year or m.introduced_year_param[sys] > first_year:
+            return Constraint.Skip
+            
+        # For existing facilities in first year, enforce baseline feedstocks
+        if fs in m.baseline_feedstocks[sys]:
+            # Ensure baseline feedstocks are selected
+            return m.feedstock_select[sys, fs, yr] == 1
+        else:
+            # Ensure non-baseline feedstocks are not selected
+            return m.feedstock_select[sys, fs, yr] == 0
+            
         return Constraint.Skip
-
 
     model.hard_baseline_feedstock_constraint = Constraint(
         model.systems, model.feedstocks, model.years,
@@ -161,21 +193,25 @@ def baseline_constraints(model):
     )
 
     def baseline_fuel_share_rule(m, sys, fuel, yr):
-            """Enforce that in the baseline year, each system's fuel consumption
-            fsches baseline production × share × fuel intensity."""
+        """Enforce that in the baseline year, each system's fuel consumption
+        matches baseline production × share × fuel intensity."""
 
-            # Only apply in the baseline year(s); skip for other years if you have multiple
-            if yr == min(m.years) and fuel in m.baseline_fuels[sys]:
-                # Find the correct index for this fuel in baseline_fuels
-                idx = m.baseline_fuels[sys].index(fuel)
+        # Skip if this is not the first year or if this facility is introduced later
+        if yr != first_year or m.introduced_year_param[sys] > first_year:
+            return Constraint.Skip
+            
+        # For existing facilities in first year, enforce baseline fuel shares
+        if fuel in m.baseline_fuels[sys]:
+            # Find the correct index for this fuel in baseline_fuels
+            idx = m.baseline_fuels[sys].index(fuel)
 
-                return m.fuel_consumption[sys, fuel, yr] == (
-                        m.baseline_fuel_shares[sys][idx]
-                        * m.baseline_production[sys]
-                        * m.fuel_eff_param[fuel, yr]
-                )
-            else:
-                return Constraint.Skip
+            return m.fuel_consumption[sys, fuel, yr] == (
+                    m.baseline_fuel_shares[sys][idx]
+                    * m.baseline_production[sys]
+                    * m.fuel_eff_param[fuel, yr]
+            )
+            
+        return Constraint.Skip
 
     model.baseline_fuel_share_constraint = Constraint(
         model.systems, model.fuels, model.years,
@@ -184,22 +220,25 @@ def baseline_constraints(model):
 
     def baseline_feedstock_share_rule(m, sys, fs, yr):
         """Enforce that in the baseline year, each system's feedstock consumption
-        fsches baseline production × feedstock share × (optionally) feedstock intensity."""
+        matches baseline production × feedstock share × feedstock intensity."""
 
-        # Only apply in the baseline year(s); skip for others
-        if yr == min(m.years) and fs in m.baseline_feedstocks[sys]:
+        # Skip if this is not the first year or if this facility is introduced later
+        if yr != first_year or m.introduced_year_param[sys] > first_year:
+            return Constraint.Skip
+            
+        # For existing facilities in first year, enforce baseline feedstock shares
+        if fs in m.baseline_feedstocks[sys]:
             # Find the correct index for this feedstock
             idx = m.baseline_feedstocks[sys].index(fs)
 
-            # If you do NOT have a separate 'feedstock_eff_param', remove it from the formula
             return (
                     m.feedstock_consumption[sys, fs, yr] ==
                     m.baseline_feedstock_shares[sys][idx]
                     * m.baseline_production[sys]
                     * m.feedstock_eff_param[fs, yr]
             )
-        else:
-            return Constraint.Skip
+            
+        return Constraint.Skip
 
     model.baseline_feedstock_share_constraint = Constraint(
         model.systems,
@@ -207,7 +246,89 @@ def baseline_constraints(model):
         model.years,
         rule=baseline_feedstock_share_rule
     )
-
+    
+    # ===== FUTURE FACILITIES (introduced_year > first model year) =====
+    
+    # Constraint to ensure facilities are inactive before their introduction year
+    def facility_inactive_before_introduction_rule(m, sys, yr):
+        """Ensure that future facilities are inactive (no production) before their introduction year"""
+        # Only apply to years before the facility's introduction year
+        if yr < m.introduced_year_param[sys]:
+            return m.production[sys, yr] == 0
+        return Constraint.Skip
+        
+    model.facility_inactive_before_introduction_constraint = Constraint(
+        model.systems, model.years, rule=facility_inactive_before_introduction_rule
+    )
+    
+    # Ensure facilities use their baseline technology when first introduced
+    def future_facility_introduction_tech_rule(m, sys, tech, yr):
+        """Activate the baseline technology for a future facility in its introduction year"""
+        # Only apply in the introduction year for future facilities
+        if yr == m.introduced_year_param[sys] and yr > first_year:
+            if tech == m.baseline_technology[sys]:
+                # Use baseline technology when introduced
+                return m.active_technology[sys, tech, yr] == 1
+            else:
+                # Other technologies must be inactive
+                return m.active_technology[sys, tech, yr] == 0
+        return Constraint.Skip
+        
+    model.future_facility_introduction_tech_constraint = Constraint(
+        model.systems, model.technologies, model.years,
+        rule=future_facility_introduction_tech_rule
+    )
+    
+    # Set the correct fuel mix when a future facility is introduced
+    def future_facility_fuel_rule(m, sys, fuel, yr):
+        """Set the correct fuel mix for a future facility in its introduction year"""
+        # Only apply in the introduction year for future facilities
+        if yr == m.introduced_year_param[sys] and yr > first_year:
+            if fuel in m.baseline_fuels[sys]:
+                # Find the correct index
+                idx = m.baseline_fuels[sys].index(fuel)
+                
+                # Set fuel consumption based on baseline shares
+                return m.fuel_consumption[sys, fuel, yr] == (
+                    m.baseline_fuel_shares[sys][idx]
+                    * m.baseline_production[sys]
+                    * m.fuel_eff_param[fuel, yr]
+                )
+            else:
+                # No consumption of other fuels
+                return m.fuel_consumption[sys, fuel, yr] == 0
+        return Constraint.Skip
+        
+    model.future_facility_fuel_constraint = Constraint(
+        model.systems, model.fuels, model.years,
+        rule=future_facility_fuel_rule
+    )
+    
+    # Set the correct feedstock mix when a future facility is introduced
+    def future_facility_feedstock_rule(m, sys, fs, yr):
+        """Set the correct feedstock mix for a future facility in its introduction year"""
+        # Only apply in the introduction year for future facilities
+        if yr == m.introduced_year_param[sys] and yr > first_year:
+            if fs in m.baseline_feedstocks[sys]:
+                # Find the correct index
+                idx = m.baseline_feedstocks[sys].index(fs)
+                
+                # Set feedstock consumption based on baseline shares
+                return m.feedstock_consumption[sys, fs, yr] == (
+                    m.baseline_feedstock_shares[sys][idx]
+                    * m.baseline_production[sys]
+                    * m.feedstock_eff_param[fs, yr]
+                )
+            else:
+                # No consumption of other feedstocks
+                return m.feedstock_consumption[sys, fs, yr] == 0
+        return Constraint.Skip
+        
+    model.future_facility_feedstock_constraint = Constraint(
+        model.systems, model.feedstocks, model.years,
+        rule=future_facility_feedstock_rule
+    )
+    
     return model
 
 def fuel_constraints(model, data):
