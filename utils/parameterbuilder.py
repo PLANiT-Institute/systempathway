@@ -85,4 +85,16 @@ def build_parameters(model, data, **kwargs):
         domain=Binary
     )
 
+    # Add capacity plan parameter
+    def capacity_init(m, sys, yr):
+        if data['capacity'] is not None and sys in data['capacity'].index and str(yr) in data['capacity'].columns:
+            return float(data['capacity'].loc[sys, str(yr)])
+        # If no capacity data available, use baseline production as fallback
+        if sys in data['baseline'].index:
+            # Use 'production' from baseline instead of 'capacity' which doesn't exist
+            return float(data['baseline'].loc[sys, 'production'])
+        return 0  # Default to zero capacity if not specified
+    
+    model.capacity_plan = Param(model.systems, model.years, initialize=capacity_init, default=0)
+
     return model

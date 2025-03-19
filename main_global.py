@@ -581,6 +581,28 @@ def main(file_path, **kwargs):
             print(f"  OPEX Intensity: {annual_global_opex[yr]/annual_global_production[yr]:.2f} $/unit")
             print(f"  Renewal Intensity: {annual_global_renewal_cost[yr]/annual_global_production[yr]:.2f} $/unit")
             print(f"  Fuel Cost Intensity: {annual_global_total_fuel_cost[yr]/annual_global_production[yr]:.2f} $/unit")
+    
+    # Print capacity plan summary
+    print("\n=== Capacity Plan Summary ===")
+    capacity_by_year = {yr: 0 for yr in model.years}
+    for sys in model.systems:
+        sys_has_capacity = False
+        for yr in model.years:
+            capacity = value(model.capacity_plan[sys, yr])
+            if capacity > 0:
+                sys_has_capacity = True
+                capacity_by_year[yr] += capacity
+        
+        if sys_has_capacity:
+            print(f"\nSystem: {sys}")
+            for yr in model.years:
+                capacity = value(model.capacity_plan[sys, yr])
+                if capacity > 0:
+                    print(f"  Year {yr}: Capacity = {capacity:.2f}, Production = {value(model.production[sys, yr]):.2f}")
+    
+    print("\nTotal Capacity by Year:")
+    for yr in sorted(capacity_by_year.keys()):
+        print(f"  Year {yr}: {capacity_by_year[yr]:.2f}")
 
     return {
         "annual_global_total_emissions": annual_global_total_emissions,
@@ -597,7 +619,8 @@ def main(file_path, **kwargs):
         "fuel_prices": fuel_prices,
         "model": model,
         "result": result,
-        "data": data
+        "data": data,
+        "capacity_by_year": capacity_by_year  # Add capacity summary to results
     }
 
 def inspect_model_structure(model):
@@ -914,8 +937,13 @@ def save_results_to_excel(output, output_file='results_global.xlsx'):
         for yr in model.years:
             row_data = {"System": sys, "Year": yr}
             
-            # Production
-            row_data["Production"] = value(model.production[sys, yr])
+            # Production and Capacity
+            production = value(model.production[sys, yr])
+            capacity = value(model.capacity_plan[sys, yr]) if hasattr(model, 'capacity_plan') else 0
+            
+            row_data["Capacity"] = capacity
+            row_data["Production"] = production
+            row_data["Capacity_Utilization"] = (production / capacity * 100) if capacity > 0 else 0
             
             # Emissions
             system_emissions = sum(value(model.emission_by_tech[sys, tech, yr]) for tech in model.technologies)
@@ -997,9 +1025,14 @@ def save_results_to_excel(output, output_file='results_global.xlsx'):
     for yr in sorted(model.years):
         row_data = {"Year": yr}
         
+        # Capacity and production
+        total_capacity = sum(value(model.capacity_plan[sys, yr]) if hasattr(model, 'capacity_plan') else 0 for sys in model.systems)
+        row_data["Total_Capacity"] = total_capacity
+        row_data["Total_Production"] = output["annual_global_production"][yr]
+        row_data["Capacity_Utilization"] = (output["annual_global_production"][yr] / total_capacity * 100) if total_capacity > 0 else 0
+        
         # Emissions and production
         row_data["Total_Emissions"] = output["annual_global_total_emissions"][yr]
-        row_data["Total_Production"] = output["annual_global_production"][yr]
         row_data["Global_Emission_Intensity"] = (
             output["annual_global_total_emissions"][yr] / output["annual_global_production"][yr] 
             if output["annual_global_production"][yr] > 0 else 0
@@ -1068,6 +1101,45 @@ def save_results_to_excel(output, output_file='results_global.xlsx'):
         annual_df = pd.DataFrame(annual_summary)
         annual_df.to_excel(writer, sheet_name='Global_Summary', index=False)
     
+    # Add a new Capacity Plan sheet
+    if hasattr(model, 'capacity_plan'):
+        capacity_data = []
+        for sys in model.systems:
+            for yr in model.years:
+                capacity = value(model.capacity_plan[sys, yr])
+                production = value(model.production[sys, yr])
+                
+                if capacity > 0 or production > 0:
+                    capacity_data.append({
+                        'System': sys,
+                        'Year': yr,
+                        'Planned_Capacity': capacity,
+                        'Actual_Production': production,
+                        'Capacity_Utilization': (production / capacity * 100) if capacity > 0 else 0
+                    })
+        
+        if capacity_data:
+            capacity_df = pd.DataFrame(capacity_data)
+            
+            # Create a pivot table for easier visualization
+            capacity_pivot = capacity_df.pivot_table(
+                values='Planned_Capacity', 
+                index='System', 
+                columns='Year', 
+                fill_value=0
+            )
+            production_pivot = capacity_df.pivot_table(
+                values='Actual_Production', 
+                index='System', 
+                columns='Year', 
+                fill_value=0
+            )
+            
+            capacity_pivot.to_excel(writer, sheet_name='Capacity_Plan')
+            production_pivot.to_excel(writer, sheet_name='Production_by_System')
+            capacity_df.to_excel(writer, sheet_name='Capacity_Detail', index=False)
+    
+    # Continue with other sheets...
     # 3. Technology use by system, technology, and year
     tech_data = []
     for sys in model.systems:
@@ -1131,250 +1203,6 @@ def save_results_to_excel(output, output_file='results_global.xlsx'):
     if tech_data:
         tech_df = pd.DataFrame(tech_data)
         tech_df.to_excel(writer, sheet_name='Technology_Use', index=False)
-    
-    # 4. Fuel consumption by system, fuel, and year
-    fuel_data = []
-    for sys in model.systems:
-        for yr in model.years:
-            for fuel in model.fuels:
-                try:
-                    fuel_amount = 0
-                    if hasattr(model, 'fuel_consumption'):
-                        fuel_amount = value(model.fuel_consumption[sys, fuel, yr])
-                    elif hasattr(model, 'fuel_use'):
-                        fuel_amount = value(model.fuel_use[sys, fuel, yr])
-                    
-                    if fuel_amount > 0.001:  # Only include significant values
-                        # Get fuel price - try both lowercase and original case
-                        fuel_price = fuel_prices.get(fuel.lower(), fuel_prices.get(fuel, 0))
-                        fuel_cost = fuel_amount * fuel_price
-                        
-                        fuel_data.append({
-                            'System': sys,
-                            'Year': yr,
-                            'Fuel': fuel,
-                            'Consumption': fuel_amount,
-                            'Unit_Price': fuel_price,
-                            'Fuel_Cost': fuel_cost
-                        })
-                except:
-                    pass
-    
-    if fuel_data:
-        fuel_df = pd.DataFrame(fuel_data)
-        fuel_df.to_excel(writer, sheet_name='Fuel_Consumption', index=False)
-    
-    # 5. Feedstock consumption by system, feedstock, and year (if available)
-    if hasattr(model, 'feedstocks'):
-        feedstock_data = []
-        for sys in model.systems:
-            for yr in model.years:
-                for feedstock in model.feedstocks:
-                    try:
-                        if hasattr(model, 'feedstock_consumption'):
-                            feedstock_amount = value(model.feedstock_consumption[sys, feedstock, yr])
-                        elif hasattr(model, 'feedstock_use'):
-                            feedstock_amount = value(model.feedstock_use[sys, feedstock, yr])
-                        else:
-                            continue
-                        
-                        if feedstock_amount > 0.001:  # Only include significant values
-                            feedstock_data.append({
-                                'System': sys,
-                                'Year': yr,
-                                'Feedstock': feedstock,
-                                'Consumption': feedstock_amount
-                            })
-                    except:
-                        pass
-        
-        if feedstock_data:
-            feedstock_df = pd.DataFrame(feedstock_data)
-            feedstock_df.to_excel(writer, sheet_name='Feedstock_Consumption', index=False)
-    
-    # 6. Add a dedicated Fuel Costs sheet
-    fuel_costs_data = []
-    for sys in model.systems:
-        for yr in model.years:
-            for fuel in model.fuels:
-                try:
-                    fuel_amount = 0
-                    if hasattr(model, 'fuel_consumption'):
-                        fuel_amount = value(model.fuel_consumption[sys, fuel, yr])
-                    elif hasattr(model, 'fuel_use'):
-                        fuel_amount = value(model.fuel_use[sys, fuel, yr])
-                    
-                    if fuel_amount > 0.001:  # Only include significant values
-                        # Get fuel price - try both lowercase and original case
-                        fuel_price = fuel_prices.get(fuel.lower(), fuel_prices.get(fuel, 0))
-                        fuel_cost = fuel_amount * fuel_price
-                        
-                        fuel_costs_data.append({
-                            'System': sys,
-                            'Year': yr,
-                            'Fuel': fuel,
-                            'Consumption': fuel_amount,
-                            'Unit_Price': fuel_price,
-                            'Fuel_Cost': fuel_cost
-                        })
-                except:
-                    pass
-    
-    if fuel_costs_data:
-        # Create the main fuel costs dataframe
-        fuel_costs_df = pd.DataFrame(fuel_costs_data)
-        
-        # Create a summary by year
-        summary_by_year = []
-        for yr in sorted(model.years):
-            year_data = fuel_costs_df[fuel_costs_df['Year'] == yr]
-            total_cost = year_data['Fuel_Cost'].sum()
-            
-            summary_by_year.append({
-                'Year': yr,
-                'Total_Fuel_Cost': total_cost
-            })
-        
-        # Create a summary by fuel type
-        summary_by_fuel = []
-        for fuel in model.fuels:
-            fuel_data = fuel_costs_df[fuel_costs_df['Fuel'] == fuel]
-            if not fuel_data.empty:
-                total_consumption = fuel_data['Consumption'].sum()
-                total_cost = fuel_data['Fuel_Cost'].sum()
-                
-                summary_by_fuel.append({
-                    'Fuel': fuel,
-                    'Total_Consumption': total_consumption,
-                    'Total_Cost': total_cost,
-                    'Average_Unit_Price': total_cost / total_consumption if total_consumption > 0 else 0
-                })
-        
-        # Save the main data
-        fuel_costs_df.to_excel(writer, sheet_name='Fuel_Costs', index=False)
-        
-        # Add the summaries if they exist
-        if summary_by_year:
-            summary_year_df = pd.DataFrame(summary_by_year)
-            summary_year_df.to_excel(writer, sheet_name='Fuel_Cost_By_Year', index=False)
-        
-        if summary_by_fuel:
-            summary_fuel_df = pd.DataFrame(summary_by_fuel)
-            summary_fuel_df.to_excel(writer, sheet_name='Fuel_Cost_By_Type', index=False)
-    
-    # 7. Add a dedicated Cost Intensity sheet
-    cost_intensity_data = []
-    for yr in sorted(model.years):
-        # Get production and costs
-        production = output["annual_global_production"][yr]
-        capex = output["annual_global_capex"][yr]
-        opex = output["annual_global_opex"][yr]
-        renewal = output["annual_global_renewal_cost"][yr]
-        fuel_cost = output["annual_global_total_fuel_cost"][yr]
-        total_cost = capex + opex + renewal + fuel_cost
-        
-        # Calculate cost intensity
-        cost_intensity = total_cost / production if production > 0 else 0
-        
-        # Calculate component intensities
-        capex_intensity = capex / production if production > 0 else 0
-        opex_intensity = opex / production if production > 0 else 0
-        renewal_intensity = renewal / production if production > 0 else 0
-        fuel_cost_intensity = fuel_cost / production if production > 0 else 0
-        
-        # Add to data
-        cost_intensity_data.append({
-            'Year': yr,
-            'Production': production,
-            'Total_Cost': total_cost,
-            'Cost_Intensity': cost_intensity,
-            'CAPEX': capex,
-            'CAPEX_Intensity': capex_intensity,
-            'OPEX': opex,
-            'OPEX_Intensity': opex_intensity,
-            'Renewal_Cost': renewal,
-            'Renewal_Intensity': renewal_intensity,
-            'Fuel_Cost': fuel_cost,
-            'Fuel_Cost_Intensity': fuel_cost_intensity
-        })
-    
-    if cost_intensity_data:
-        cost_intensity_df = pd.DataFrame(cost_intensity_data)
-        cost_intensity_df.to_excel(writer, sheet_name='Cost_Intensity', index=False)
-    
-    # 8. Add a Fuel Prices sheet
-    fuel_prices_data = []
-    for fuel, price in fuel_prices.items():
-        fuel_prices_data.append({
-            'Fuel': fuel,
-            'Unit_Price': price
-        })
-    
-    if fuel_prices_data:
-        fuel_prices_df = pd.DataFrame(fuel_prices_data)
-        fuel_prices_df.to_excel(writer, sheet_name='Fuel_Prices', index=False)
-    
-    # 9. Add a dedicated Cost Breakdown sheet
-    cost_breakdown_data = []
-    for sys in model.systems:
-        for yr in model.years:
-            cost_breakdown_data.append({
-                'System': sys,
-                'Year': yr,
-                'CAPEX': system_costs[sys]['capex'][yr],
-                'OPEX': system_costs[sys]['opex'][yr],
-                'Renewal_Cost': system_costs[sys]['renewal'][yr],
-                'Fuel_Cost': system_costs[sys]['fuel'][yr],
-                'Total_Cost': (
-                    system_costs[sys]['capex'][yr] + 
-                    system_costs[sys]['opex'][yr] + 
-                    system_costs[sys]['renewal'][yr] + 
-                    system_costs[sys]['fuel'][yr]
-                )
-            })
-    
-    if cost_breakdown_data:
-        cost_breakdown_df = pd.DataFrame(cost_breakdown_data)
-        cost_breakdown_df.to_excel(writer, sheet_name='Cost_Breakdown', index=False)
-    
-    # 10. Add a dedicated Technology Cost Parameters sheet
-    tech_cost_params = []
-    if hasattr(model, 'capex_param') or hasattr(model, 'opex_param') or hasattr(model, 'renewal_param'):
-        for tech in model.technologies:
-            for yr in model.years:
-                row = {'Technology': tech, 'Year': yr}
-                
-                # Add CAPEX parameter
-                if hasattr(model, 'capex_param'):
-                    try:
-                        if (tech, yr) in model.capex_param:
-                            row['CAPEX_Rate'] = value(model.capex_param[tech, yr])
-                    except:
-                        pass
-                
-                # Add OPEX parameter
-                if hasattr(model, 'opex_param'):
-                    try:
-                        if (tech, yr) in model.opex_param:
-                            row['OPEX_Rate'] = value(model.opex_param[tech, yr])
-                    except:
-                        pass
-                
-                # Add Renewal parameter
-                if hasattr(model, 'renewal_param'):
-                    try:
-                        if (tech, yr) in model.renewal_param:
-                            row['Renewal_Rate'] = value(model.renewal_param[tech, yr])
-                    except:
-                        pass
-                
-                # Only add row if it has at least one cost parameter
-                if len(row) > 2:
-                    tech_cost_params.append(row)
-    
-    if tech_cost_params:
-        tech_cost_params_df = pd.DataFrame(tech_cost_params)
-        tech_cost_params_df.to_excel(writer, sheet_name='Technology_Cost_Parameters', index=False)
     
     # Save and close the Excel file
     writer.close()

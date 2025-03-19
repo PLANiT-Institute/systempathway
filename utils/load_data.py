@@ -22,6 +22,15 @@ def load_data(file_path):
     data['opex'] = pd.read_excel(file_path, sheet_name='opex', index_col=0)
     data['renewal'] = pd.read_excel(file_path, sheet_name='renewal', index_col=0)
     data['carbonprice'] = pd.read_excel(file_path, sheet_name='carbonprice', index_col=0)
+    
+    # Load capacity plan data
+    try:
+        data['capacity'] = pd.read_excel(file_path, sheet_name='capacity', index_col=0)
+        print(f"Loaded capacity plan data for {len(data['capacity'])} systems.")
+    except Exception as e:
+        print(f"Warning: Could not load 'capacity' sheet: {e}")
+        print("The model will use baseline production values as fallback.")
+        data['capacity'] = None
 
     technology_fuel_pairs_df = pd.read_excel(file_path, sheet_name='technology_fuel_pairs')
     data['technology_fuel_pairs'] = technology_fuel_pairs_df.groupby('technology')['fuel'].apply(list).to_dict()
