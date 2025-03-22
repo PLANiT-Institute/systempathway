@@ -607,21 +607,8 @@ def other_constraints(model, **kwargs):
         model.systems, model.technologies, model.years, rule=introduction_year_constraint_rule
     )
 
-    # # Example: Minimum production per system per year
-    # def minimum_production_rule(m, sys, yr):
-    #     return m.production[sys, yr] >= m.production_param[sys]
-    #
-    # model.minimum_production_constraint = Constraint(model.systems, model.years, rule=minimum_production_rule)
-
     def production_target_rule(m, sys, yr):
         return m.production[sys, yr] == m.production_param[sys, yr]
-
-    # def production_target_rule(m, sys, yr):
-    #     # Enforce production == data for ALL years that appear in your param
-    #     if (sys, yr) in m.production_param:
-    #         return m.production[sys, yr] == m.production_param[sys, yr]
-    #     else:
-    #         return Constraint.Skip
 
     model.production_target_constraint = Constraint(model.systems, model.years, rule=production_target_rule)
 
@@ -635,7 +622,6 @@ def other_constraints(model, **kwargs):
     model.zero_production_inactive_constraint = Constraint(
         model.systems, model.years, rule=enforce_zero_production_inactive
     )
-
 
     def enforce_replace_when_inactive_to_active(m, sys, yr):
         # Skip first year (no previous year)
@@ -654,6 +640,40 @@ def other_constraints(model, **kwargs):
 
     model.replace_when_inactive_to_active_constraint = Constraint(
         model.systems, model.years, rule=enforce_replace_when_inactive_to_active
+    )
+
+    def fix_baseline_late_start_rule(m, sys, tech, yr):
+        """
+        If a system was inactive in (yr-1) and becomes active in yr,
+        only the baseline technology can do replace=1, and all others must be 0.
+        """
+        # Skip the very first model year (no previous year to compare).
+        if yr == min(m.years):
+            return Constraint.Skip
+
+        prev_year = yr - 1
+
+        # Check if we have a "late start" at year Y:
+        # i.e. production_param is 0 in year (Y-1) and > 0 in year Y.
+        if (m.production_param[sys, prev_year] == 0) and (m.production_param[sys, yr] > 0):
+            baseline_tech = m.baseline_technology[sys]
+            if tech == baseline_tech:
+                # The baseline tech must do replace=1
+                return m.replace[sys, tech, yr] == 1
+            else:
+                # All other technologies must remain 0 in that year
+                return (
+                        m.replace[sys, tech, yr]
+                        + m.renew[sys, tech, yr]
+                        + m.continue_technology[sys, tech, yr]
+                ) == 0
+        return Constraint.Skip
+
+    model.fix_baseline_late_start_constraint = Constraint(
+        model.systems,
+        model.technologies,
+        model.years,
+        rule=fix_baseline_late_start_rule
     )
 
     return model
