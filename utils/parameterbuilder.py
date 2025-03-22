@@ -1,4 +1,6 @@
-from pyomo.environ import (Var, NonNegativeReals, Binary, Param,Set, Any)
+from pyomo.environ import (
+    Var, NonNegativeReals, Binary, Param, Set, Any
+)
 
 def build_parameters(model, data, **kwargs):
 
@@ -35,7 +37,7 @@ def build_parameters(model, data, **kwargs):
     model.feedstock_cost_param = Param(model.feedstocks, model.years, initialize=lambda m, fs, yr: data['feedstock_cost'].loc[fs, yr], default=0.0)
     model.feedstock_eff_param = Param(model.feedstocks, model.years, initialize=lambda m, fs, yr: data['feedstock_intensity'].loc[fs, yr], default=0.0)
     model.feedstock_emission = Param(model.feedstocks, model.years, initialize=lambda m, fs, yr: data['feedstock_emission'].loc[fs, yr], default=0.0)
-    # model.production_param = Param(model.systems, initialize=data['baseline']['production'].to_dict(), default=0)
+
     model.lifespan_param = Param(model.technologies, initialize=lambda m, tech: data['technology'].loc[tech, 'lifespan'], default=0)
     model.introduced_year_param = Param(model.systems, initialize=data['baseline']['introduced_year'].to_dict(), default=0)
     model.technology_ei = Param(model.technologies, model.years, initialize=lambda m, tech, yr: data['technology_ei'].loc[tech, yr], default=1.0)
@@ -43,6 +45,15 @@ def build_parameters(model, data, **kwargs):
     model.technology_introduction = Param(model.technologies, initialize=lambda m, tech: data['technology'].loc[tech, 'introduction'], default=0)
     model.baseline_technology = Param(model.systems, initialize=lambda m, sys: data['baseline'].loc[sys, 'technology'], within=model.technologies)
     model.max_renew = Param(initialize=max_renew)
+
+    # ✨ NEW: Define a param to store 'availability' for each tech (list of allowed actions).
+    # e.g. {'BF-BOF': ['replace','renew','continue'], 'BF-BOF-FX': ['renew','continue'], ...}
+    # We'll store it as `within=Any` because it's a list of strings.
+    model.technology_availability = Param(
+        model.technologies,
+        initialize=data['technology_availability'],
+        within=Any
+    )
 
     # Decision Variables
     model.replace = Var(model.systems, model.technologies, model.years, domain=Binary, initialize=0)
@@ -62,28 +73,9 @@ def build_parameters(model, data, **kwargs):
     model.total_fuel_consumption = Var(model.systems, model.years, within=NonNegativeReals)
     model.total_feedstock_consumption = Var(model.systems, model.years, within=NonNegativeReals)
 
-    """
-    Emission Constraints
-    """
-    # # 4.1. Emission Constraints
+    model.active_fuel_consumption = Var(model.systems, model.technologies, model.fuels, model.years, domain=NonNegativeReals)
+    model.active_feedstock_consumption = Var(model.systems, model.technologies, model.feedstocks, model.years, domain=NonNegativeReals)
 
-    # Auxiliary variables to capture consumption only if the tech is active
-    model.active_fuel_consumption = Var(
-        model.systems, model.technologies, model.fuels, model.years,
-        domain=NonNegativeReals
-    )
-    model.active_feedstock_consumption = Var(
-        model.systems, model.technologies, model.feedstocks, model.years,
-        domain=NonNegativeReals
-    )
-
-    # Suppose 'model.years' is a list or set of integer years in ascending order.
-    model.active_if_started = Var(
-        model.systems,
-        model.technologies,
-        model.years,  # possible start year 's'
-        model.years,  # actual operating year 't'
-        domain=Binary
-    )
+    model.active_if_started = Var(model.systems, model.technologies, model.years, model.years, domain=Binary)
 
     return model
