@@ -40,5 +40,7 @@ def load_data(file_path):
     data['technology_ei'] = pd.read_excel(file_path, sheet_name='technology_ei', index_col=0)
     data['fuel_introduction'] = pd.read_excel(file_path, sheet_name='fuel_introduction', index_col=0)['introduction']
     data['feedstock_introduction'] = pd.read_excel(file_path, sheet_name='feedstock_introduction', index_col=0)['introduction']
+    
+    data['production'] = pd.read_excel(file_path, sheet_name='production', index_col=0)
 
     return data

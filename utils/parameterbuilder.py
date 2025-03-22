@@ -22,6 +22,7 @@ def build_parameters(model, data, **kwargs):
     model.baseline_feedstocks = Param(model.systems, initialize=baseline_feedstocks_data, within=Any)
     model.baseline_feedstock_shares = Param(model.systems, initialize=baseline_feedstock_shares_data, within=Any)
     model.baseline_production = Param(model.systems, initialize=data['baseline']['production'].to_dict(), within=NonNegativeReals)
+    model.production_param = Param(model.systems, model.years, initialize=data["production"].stack().to_dict(), default=0.0)
 
     # Other Parameters
     model.carbonprice_param = Param(model.years, initialize=lambda m, yr: data['carbonprice'].loc['global', yr], default=0.0)
@@ -34,7 +35,7 @@ def build_parameters(model, data, **kwargs):
     model.feedstock_cost_param = Param(model.feedstocks, model.years, initialize=lambda m, fs, yr: data['feedstock_cost'].loc[fs, yr], default=0.0)
     model.feedstock_eff_param = Param(model.feedstocks, model.years, initialize=lambda m, fs, yr: data['feedstock_intensity'].loc[fs, yr], default=0.0)
     model.feedstock_emission = Param(model.feedstocks, model.years, initialize=lambda m, fs, yr: data['feedstock_emission'].loc[fs, yr], default=0.0)
-    model.production_param = Param(model.systems, initialize=data['baseline']['production'].to_dict(), default=0)
+    # model.production_param = Param(model.systems, initialize=data['baseline']['production'].to_dict(), default=0)
     model.lifespan_param = Param(model.technologies, initialize=lambda m, tech: data['technology'].loc[tech, 'lifespan'], default=0)
     model.introduced_year_param = Param(model.systems, initialize=data['baseline']['introduced_year'].to_dict(), default=0)
     model.technology_ei = Param(model.technologies, model.years, initialize=lambda m, tech, yr: data['technology_ei'].loc[tech, yr], default=1.0)

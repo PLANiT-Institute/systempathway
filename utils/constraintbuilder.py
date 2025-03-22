@@ -4,7 +4,7 @@ def emission_constraints(model,**kwargs):
 
     carbonprice_include = kwargs.get('carbonprice_include', False)
 
-    BIG_M = 1e15  # Adjust based on your data scale
+    BIG_M = max(model.production_param.values()) * max(model.fuel_eff_param.values())
 
     # 1) If tech is active, let active_fuel_consumption track fuel_consumption
     #    If tech is inactive, force it to be zero
@@ -88,10 +88,10 @@ def emission_constraints(model,**kwargs):
             model.years, rule=emission_limit_rule
         )
 
-    def technology_activation_rule(m, sys, yr):
-        return sum(m.active_technology[sys, tech, yr] for tech in m.technologies) == 1
+    # def technology_activation_rule(m, sys, yr):
+    #     return sum(m.active_technology[sys, tech, yr] for tech in m.technologies) == 1
 
-    model.technology_activation_constraint = Constraint(model.systems, model.years, rule=technology_activation_rule)
+    # model.technology_activation_constraint = Constraint(model.systems, model.years, rule=technology_activation_rule)
 
     return model
 
@@ -99,6 +99,9 @@ def baseline_constraints(model):
     # Ensure baseline technology is active and continued in the first year
     def baseline_technology_first_year_rule(m, sys, tech, yr):
         if yr == min(m.years) and tech == m.baseline_technology[sys]:
+            # 만약 첫 해의 생산량이 0이면 스킵
+            if m.production_param[sys, yr] == 0:
+                return Constraint.Skip
             return m.continue_technology[sys, tech, yr] == 1
         return Constraint.Skip
 
@@ -211,135 +214,217 @@ def baseline_constraints(model):
     return model
 
 def fuel_constraints(model, data):
-
-    # 4.5. Fuel Constraints
+    # --------------------------------------
+    # 4.5.1 Production = sum of active fuel usage (by tech)
+    # --------------------------------------
     def fuel_production_constraint_rule(m, sys, yr):
-        return m.production[sys, yr] == sum(
-            m.fuel_consumption[sys, fuel, yr] / m.fuel_eff_param[fuel, yr] for fuel in m.fuels
+        """
+        Production of system 'sys' at year 'yr' equals the sum of
+        active fuel consumption for all technologies, adjusted by fuel efficiency.
+        """
+        return (
+            m.production[sys, yr]
+            == sum(
+                m.active_fuel_consumption[sys, tech, f, yr] / m.fuel_eff_param[f, yr]
+                for tech in m.technologies
+                for f in m.fuels
+            )
         )
 
-    model.fuel_production_constraint = Constraint(model.systems, model.years, rule=fuel_production_constraint_rule)
+    model.fuel_production_constraint = Constraint(
+        model.systems, model.years,
+        rule=fuel_production_constraint_rule
+    )
 
+    # --------------------------------------
+    # 4.5.2 System-level fuel consumption = sum of tech-level consumption
+    # --------------------------------------
+    def fuel_system_sum_rule(m, sys, f, yr):
+        """
+        The system-level fuel consumption = sum of the tech-level active fuel consumption.
+        This ensures that if a technology isn't valid for 'f', it remains 0.
+        """
+        return m.fuel_consumption[sys, f, yr] == sum(
+            m.active_fuel_consumption[sys, tech, f, yr]
+            for tech in m.technologies
+        )
+
+    model.fuel_system_sum_constraint = Constraint(
+        model.systems, model.fuels, model.years,
+        rule=fuel_system_sum_rule
+    )
+
+    # --------------------------------------
+    # 4.5.3 Restrict usage if (tech, fuel) not allowed
+    # --------------------------------------
+    def restrict_fuel_usage_rule(m, sys, tech, f, yr):
+        """
+        If fuel 'f' is NOT in data['technology_fuel_pairs'][tech],
+        force active_fuel_consumption[sys, tech, f, yr] == 0.
+        """
+        valid_fuels = data['technology_fuel_pairs']  # dict: { 'BF-BOF': ['Coal_BB',...], ... }
+        if f not in valid_fuels[tech]:
+            return m.active_fuel_consumption[sys, tech, f, yr] == 0
+        return Constraint.Skip
+
+    model.restrict_fuel_usage_constraint = Constraint(
+        model.systems, model.technologies, model.fuels, model.years,
+        rule=restrict_fuel_usage_rule
+    )
+
+    # --------------------------------------
+    # 4.5.4 At least one fuel selected per system-year
+    # --------------------------------------
     def fuel_selection_rule(m, sys, yr):
         return sum(m.fuel_select[sys, fuel, yr] for fuel in m.fuels) >= 1
 
-    model.fuel_selection_constraint = Constraint(model.systems, model.years, rule=fuel_selection_rule)
+    model.fuel_selection_constraint = Constraint(
+        model.systems, model.years,
+        rule=fuel_selection_rule
+    )
 
-
+    # --------------------------------------
+    # 4.5.5 Summation of total fuel consumption
+    # --------------------------------------
     def total_fuel_consumption_rule(m, sys, yr):
-        # Total fuel consumption per system for each year
         return m.total_fuel_consumption[sys, yr] == sum(
             m.fuel_consumption[sys, fuel, yr] for fuel in m.fuels
         )
 
     model.total_fuel_consumption_constraint = Constraint(
-        model.systems, model.years, rule=total_fuel_consumption_rule
+        model.systems, model.years,
+        rule=total_fuel_consumption_rule
     )
 
-    M_fuel = max(model.production_param.values()) * max(model.fuel_eff_param.values())  # Adjust based on the problem scale
-
-    # 5. Maximum Fuel Share Constraint
+    # --------------------------------------
+    # 4.5.6 Max/min share constraints (optional)
+    # --------------------------------------
+    M_fuel = max(model.production_param.values()) * max(model.fuel_eff_param.values())
 
     def fuel_max_share_constraint_rule(m, sys, tech, f, yr):
-        if yr > min(m.years):
-            # Get the maximum allowable share for the (technology, fuel) combination
-            max_share = data['fuel_max_ratio'].get((tech, f), 0)
+        if yr > min(m.years) and (tech, f) in data['fuel_max_ratio']:
+            max_share = data['fuel_max_ratio'][(tech, f)]
             return m.fuel_consumption[sys, f, yr] <= (
-                    max_share * m.total_fuel_consumption[sys, yr] + M_fuel * (1 - m.active_technology[sys, tech, yr])
+                max_share * m.total_fuel_consumption[sys, yr]
+                + M_fuel * (1 - m.active_technology[sys, tech, yr])
             )
-        else:
-            return Constraint.Skip
+        return Constraint.Skip
 
     model.fuel_max_share_constraint = Constraint(
-        model.systems, model.technologies, model.fuels, model.years, rule=fuel_max_share_constraint_rule
+        model.systems, model.technologies, model.fuels, model.years,
+        rule=fuel_max_share_constraint_rule
     )
 
     def fuel_min_share_constraint_rule(m, sys, tech, f, yr):
-        # Look up the introduction year for this fuel
-        introduction_year = data['fuel_introduction'].loc[f]
+        if yr > min(m.years) and (tech, f) in data['fuel_min_ratio']:
+            intro_year = data['fuel_introduction'].loc[f]
+            if yr < intro_year:
+                return m.fuel_consumption[sys, f, yr] == 0
 
-        # If we're before the introduction year, enforce zero consumption
-        if yr < introduction_year:
-            return m.fuel_consumption[sys, f, yr] == 0
-
-        # Otherwise, apply the minimum-share constraint
-        min_share = data['fuel_min_ratio'].get((tech, f), 0)
-        return m.fuel_consumption[sys, f, yr] >= (
+            min_share = data['fuel_min_ratio'][(tech, f)]
+            return m.fuel_consumption[sys, f, yr] >= (
                 min_share * m.total_fuel_consumption[sys, yr]
                 - M_fuel * (1 - m.active_technology[sys, tech, yr])
-        )
+            )
+        return Constraint.Skip
 
     model.fuel_min_share_constraint = Constraint(
-        model.systems, model.technologies, model.fuels, model.years, rule=fuel_min_share_constraint_rule
+        model.systems, model.technologies, model.fuels, model.years,
+        rule=fuel_min_share_constraint_rule
     )
 
     return model
 
+
 def feedstock_constraints(model, data):
 
-    # 4.6. Material Constraints
-    M_fs = max(model.production_param.values()) * max(model.feedstock_eff_param.values())  # Adjust based on the problem scale
-
-    # 4.6.0. Material Production Constraint
+    # 1) 생산량 = (기술별 feedstock 소모량 / 효율)의 합
     def feedstock_production_constraint_rule(m, sys, yr):
         return m.production[sys, yr] == sum(
-            m.feedstock_consumption[sys, fs, yr] / m.feedstock_eff_param[fs, yr] for fs in m.feedstocks
+            m.active_feedstock_consumption[sys, tech, fs, yr] / m.feedstock_eff_param[fs, yr]
+            for tech in m.technologies
+            for fs in m.feedstocks
         )
 
-    model.feedstock_production_constraint = Constraint(model.systems, model.years,
-                                                      rule=feedstock_production_constraint_rule)
+    model.feedstock_production_constraint = Constraint(
+        model.systems, model.years,
+        rule=feedstock_production_constraint_rule
+    )
 
+    # 2) 시스템 차원의 feedstock 소비량 = (기술별 소비량)의 합
+    def feedstock_system_sum_rule(m, sys, fs, yr):
+        return m.feedstock_consumption[sys, fs, yr] == sum(
+            m.active_feedstock_consumption[sys, tech, fs, yr]
+            for tech in m.technologies
+        )
+
+    model.feedstock_system_sum_constraint = Constraint(
+        model.systems, model.feedstocks, model.years,
+        rule=feedstock_system_sum_rule
+    )
+
+    # 3) (기술, feedstock) 조합이 유효하지 않으면 소비량 = 0
+    def restrict_feedstock_usage_rule(m, sys, tech, fs, yr):
+        valid_feedstocks = data['technology_feedstock_pairs']  # 예: {"BF-BOF": ["Iron ore_BB", "Scrap_BB"], ...}
+        if fs not in valid_feedstocks[tech]:
+            # 이 기술에 해당 원료(fs)는 사용 불가 → active_feedstock_consumption = 0
+            return m.active_feedstock_consumption[sys, tech, fs, yr] == 0
+        return Constraint.Skip
+
+    model.restrict_feedstock_usage_constraint = Constraint(
+        model.systems, model.technologies, model.feedstocks, model.years,
+        rule=restrict_feedstock_usage_rule
+    )
+
+    # 4) 시스템별로 원료 선택이 최소 1개 이상? (선택적)
     def feedstock_selection_rule(m, sys, yr):
         return sum(m.feedstock_select[sys, fs, yr] for fs in m.feedstocks) >= 1
 
-    model.feedstock_selection_constraint = Constraint(model.systems, model.years, rule=feedstock_selection_rule)
+    model.feedstock_selection_constraint = Constraint(
+        model.systems, model.years,
+        rule=feedstock_selection_rule
+    )
 
-    # 1. Total Material Consumption for Each System
+    # 5) 총원료 소비 (편의상 집계)
     def total_feedstock_consumption_rule(m, sys, yr):
-        # Total feedstock consumption per system for each year
         return m.total_feedstock_consumption[sys, yr] == sum(
             m.feedstock_consumption[sys, fs, yr] for fs in m.feedstocks
         )
 
     model.total_feedstock_consumption_constraint = Constraint(
-        model.systems, model.years, rule=total_feedstock_consumption_rule
+        model.systems, model.years,
+        rule=total_feedstock_consumption_rule
     )
 
-    # 5. Maximum Material Share Constraint
-    def feedstock_max_share_constraint_rule(m, sys, tech, fs, yr):
-        if yr > min(m.years):
+    # 6) feedstock별 최대·최소 점유율 (필요에 따라 유지)
+    M_fs = max(model.production_param.values()) * max(model.feedstock_eff_param.values())
 
-            # Get the maximum allowable share for the (technology, feedstock) combination
-            max_share = data['feedstock_max_ratio'].get((tech, fs), 0)
+    def feedstock_max_share_constraint_rule(m, sys, tech, fs, yr):
+        if yr > min(m.years) and (tech, fs) in data['feedstock_max_ratio']:
+            max_share = data['feedstock_max_ratio'][(tech, fs)]
             return m.feedstock_consumption[sys, fs, yr] <= (
-                    max_share * m.total_feedstock_consumption[sys, yr] + M_fs * (1 - m.active_technology[sys, tech, yr])
+                max_share * m.total_feedstock_consumption[sys, yr]
+                + M_fs * (1 - m.active_technology[sys, tech, yr])
             )
-        else:
-            return Constraint.Skip
+        return Constraint.Skip
 
     model.feedstock_max_share_constraint = Constraint(
-        model.systems, model.technologies, model.feedstocks, model.years, rule=feedstock_max_share_constraint_rule
+        model.systems, model.technologies, model.feedstocks, model.years,
+        rule=feedstock_max_share_constraint_rule
     )
 
     def feedstock_min_share_constraint_rule(m, sys, tech, fs, yr):
-        # Pull the introduction year from your data
-        introduction_year = data['feedstock_introduction'].loc[fs]
+        if yr > min(m.years) and (tech, fs) in data['feedstock_min_ratio']:
+            intro_year = data['feedstock_introduction'].loc[fs]
+            if yr < intro_year:
+                return m.feedstock_consumption[sys, fs, yr] == 0
 
-        # For years before introduction, force zero consumption
-        if yr < introduction_year:
-            return m.feedstock_consumption[sys, fs, yr] == 0
-
-        # For introduced feedstocks, apply the min-share logic
-        min_share = data['feedstock_min_ratio'].get((tech, fs), 0)
-
-        # M_fs is your chosen "big M" for feedstocks; you already define it above.
-        # The constraint says: if technology (sys, tech) is active,
-        # feedstock_consumption >= min_share * total_feedstock_consumption
-        # Otherwise, it can be relaxed by up to M_fs if the tech is not active.
-        return m.feedstock_consumption[sys, fs, yr] >= (
+            min_share = data['feedstock_min_ratio'][(tech, fs)]
+            return m.feedstock_consumption[sys, fs, yr] >= (
                 min_share * m.total_feedstock_consumption[sys, yr]
                 - M_fs * (1 - m.active_technology[sys, tech, yr])
-        )
+            )
+        return Constraint.Skip
 
     model.feedstock_min_share_constraint = Constraint(
         model.systems, model.technologies, model.feedstocks, model.years,
@@ -501,8 +586,12 @@ def other_constraints(model, **kwargs):
                                                     rule=active_technology_rule)
 
     def single_active_technology_rule(m, sys, yr):
-        # Ensure only one technology is active in a given year per system
-        return sum(m.active_technology[sys, tech, yr] for tech in m.technologies) == 1
+        if m.production_param[sys, yr] == 0:
+            # 생산 0이면 활성화 기술이 없어도 됨
+            return Constraint.Skip
+        else:
+            # Ensure only one technology is active in a given year per system
+            return sum(m.active_technology[sys, tech, yr] for tech in m.technologies) == 1
 
     model.single_active_technology_constraint = Constraint(
         model.systems, model.years, rule=single_active_technology_rule
@@ -518,11 +607,54 @@ def other_constraints(model, **kwargs):
         model.systems, model.technologies, model.years, rule=introduction_year_constraint_rule
     )
 
-    # Example: Minimum production per system per year
-    def minimum_production_rule(m, sys, yr):
-        return m.production[sys, yr] >= m.production_param[sys]
+    # # Example: Minimum production per system per year
+    # def minimum_production_rule(m, sys, yr):
+    #     return m.production[sys, yr] >= m.production_param[sys]
+    #
+    # model.minimum_production_constraint = Constraint(model.systems, model.years, rule=minimum_production_rule)
 
-    model.minimum_production_constraint = Constraint(model.systems, model.years, rule=minimum_production_rule)
+    def production_target_rule(m, sys, yr):
+        return m.production[sys, yr] == m.production_param[sys, yr]
+
+    # def production_target_rule(m, sys, yr):
+    #     # Enforce production == data for ALL years that appear in your param
+    #     if (sys, yr) in m.production_param:
+    #         return m.production[sys, yr] == m.production_param[sys, yr]
+    #     else:
+    #         return Constraint.Skip
+
+    model.production_target_constraint = Constraint(model.systems, model.years, rule=production_target_rule)
+
+
+
+    def enforce_zero_production_inactive(m, sys, yr):
+        if m.production_param[sys, yr] == 0:
+            return sum(m.active_technology[sys, tech, yr] for tech in m.technologies) == 0
+        return Constraint.Skip
+
+    model.zero_production_inactive_constraint = Constraint(
+        model.systems, model.years, rule=enforce_zero_production_inactive
+    )
+
+
+    def enforce_replace_when_inactive_to_active(m, sys, yr):
+        # Skip first year (no previous year)
+        if yr == min(m.years):
+            return Constraint.Skip
+
+        # 만약 작년(yr-1) 생산량이 0이었다면 => 시스템 비활성
+        if m.production_param[sys, yr - 1] == 0:
+            # 올해(yr)에 시스템이 활성화된다면 => sum(continue + renew) = 0
+            # 즉 replace 외에는 안 됨.
+            return sum(
+                m.continue_technology[sys, tech, yr] + m.renew[sys, tech, yr]
+                for tech in m.technologies
+            ) == 0
+        return Constraint.Skip
+
+    model.replace_when_inactive_to_active_constraint = Constraint(
+        model.systems, model.years, rule=enforce_replace_when_inactive_to_active
+    )
 
     return model
 
@@ -530,7 +662,7 @@ def lifespan_constraints(model):
     def enforce_replacement_or_renewal_years_rule(m, sys, tech, yr):
         introduced_year = m.introduced_year_param[sys]
         lifespan = m.lifespan_param[tech]
-        if yr > introduced_year and (yr - introduced_year) % lifespan != 0:
+        if (yr - introduced_year) >= 0 and (yr - introduced_year) % lifespan != 0:
             return m.replace[sys, tech, yr] + m.renew[sys, tech, yr] == 0
         return Constraint.Skip
 
@@ -541,7 +673,7 @@ def lifespan_constraints(model):
     def enforce_no_continuation_in_replacement_years_rule(m, sys, tech, yr):
         introduced_year = m.introduced_year_param[sys]
         lifespan = m.lifespan_param[tech]
-        if yr > introduced_year and (yr - introduced_year) % lifespan == 0:
+        if (yr - introduced_year) >= 0 and (yr - introduced_year) % lifespan == 0:
             return m.continue_technology[sys, tech, yr] == 0
         return Constraint.Skip
 
