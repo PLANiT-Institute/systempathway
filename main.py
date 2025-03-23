@@ -1,4 +1,5 @@
 from pyomo.environ import *
+import os
 
 from pyomo.util.infeasible import log_infeasible_constraints
 import pandas as pd
@@ -28,11 +29,8 @@ def main(file_path, **kwargs):
                                     allow_replace_same_technology=allow_replace_same_technology)
 
     # Solve the Model
-    solver = SolverFactory('glpk')
-    if not solver.available():
-        raise RuntimeError("Solver is not available. Please install it or choose another solver.")
-
-    result = solver.solve(model, tee=True)
+    solver = SolverFactory('appsi_highs')
+    result = solver.solve(model, tee=True, load_solutions=True)
 
     # Check Solver Status
     if (result.solver.status == 'ok') and (result.solver.termination_condition == 'optimal'):
@@ -189,6 +187,8 @@ def main(file_path, **kwargs):
 
     # Export to Excel
     output_excel_path = "results/Model_Output.xlsx"
+    technology_data = {}  # Dictionary to collect Year-Technology pairs for each system
+
     with pd.ExcelWriter(output_excel_path, engine='openpyxl') as writer:
         # Global summary
         annual_summary_df.to_excel(writer, sheet_name='Global Annual Summary')
@@ -207,10 +207,19 @@ def main(file_path, **kwargs):
             tech_df = pd.DataFrame(system_results[sys]['technology_statuses'])
             tech_df_filtered = tech_df[
                 tech_df[['Active', 'Continue', 'Replace', 'Renew']].sum(axis=1) >= 1
-            ]
+                ]
             tech_df_filtered.to_excel(writer, sheet_name=f"{sys}_Tech", index=False)
 
-    print(f"\nResults successfully written to {output_excel_path}")
+            # Save for merged technology sheet
+            technology_data[sys] = tech_df_filtered[['Year', 'Technology']].reset_index(drop=True)
+
+        # Merge all system technology info on Year
+        merged_tech_df = pd.DataFrame({'Year': sorted(set().union(*[df['Year'] for df in technology_data.values()]))})
+        for sys, df in technology_data.items():
+            merged_tech_df = merged_tech_df.merge(df, on='Year', how='left', suffixes=('', f'_{sys}'))
+            merged_tech_df.rename(columns={'Technology': f'{sys}_Technology'}, inplace=True)
+
+        merged_tech_df.to_excel(writer, sheet_name='Technology', index=False)
 
 
 if __name__ == "__main__":
