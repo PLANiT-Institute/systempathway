@@ -219,7 +219,12 @@ def main(file_path, **kwargs):
             merged_tech_df = merged_tech_df.merge(df, on='Year', how='left', suffixes=('', f'_{sys}'))
             merged_tech_df.rename(columns={'Technology': f'{sys}_Technology'}, inplace=True)
 
-        merged_tech_df.to_excel(writer, sheet_name='Technology', index=False)
+            merged_tech_df.to_excel(writer, sheet_name='Technology', index=False)
+            desired_order = ['Global Annual Summary', 'Technology']
+            all_sheets = writer.book.worksheets
+            ordered_sheets = [sheet for name in desired_order for sheet in all_sheets if sheet.title == name]
+            ordered_sheets += [sheet for sheet in all_sheets if sheet.title not in desired_order]
+            writer.book._sheets = ordered_sheets
 
 
 if __name__ == "__main__":
