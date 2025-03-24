@@ -15,6 +15,7 @@ importlib.reload(_md)
 
 def main(file_path, **kwargs):
 
+    solver_selection = kwargs.pop('solver_selection')
     carbonprice_include = kwargs.get('carboprice_include', False)
     max_renew = kwargs.get('max_renew', 10)
     allow_replace_same_technology = kwargs.get('allow_replace_same_technology', False)
@@ -29,7 +30,7 @@ def main(file_path, **kwargs):
                                     allow_replace_same_technology=allow_replace_same_technology)
 
     # Solve the Model
-    solver = SolverFactory('appsi_highs')
+    solver = SolverFactory(solver_selection)
     result = solver.solve(model, tee=True, load_solutions=True)
 
     # Check Solver Status
@@ -230,6 +231,7 @@ def main(file_path, **kwargs):
 if __name__ == "__main__":
     file_path = 'database/Steel Data Mar 10.xlsx'
     output = main(file_path,
+                  solver_selection='appsi_highs', # appsi_highs
                   carboprice_include=False,
                   max_renew=10,
                   allow_replace_same_technology=False)
