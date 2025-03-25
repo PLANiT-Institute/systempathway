@@ -1,3 +1,4 @@
+
 from pyomo.environ import (Constraint)
 import pandas as pd
 
@@ -683,7 +684,7 @@ def lifespan_constraints(model):
     def enforce_replacement_or_renewal_years_rule(m, sys, tech, yr):
         introduced_year = m.introduced_year_param[sys]
         lifespan = m.lifespan_param[tech]
-        if (yr - introduced_year) >= 0 and (yr - introduced_year) % lifespan != 0:
+        if ((yr - introduced_year) >= 0 )and ((yr - introduced_year) % lifespan != 0):
             return m.replace[sys, tech, yr] + m.renew[sys, tech, yr] == 0
         return Constraint.Skip
 
@@ -694,7 +695,7 @@ def lifespan_constraints(model):
     def enforce_no_continuation_in_replacement_years_rule(m, sys, tech, yr):
         introduced_year = m.introduced_year_param[sys]
         lifespan = m.lifespan_param[tech]
-        if (yr - introduced_year) >= 0 and (yr - introduced_year) % lifespan == 0:
+        if ((yr - introduced_year) >= 0) and ((yr - introduced_year) % lifespan == 0):
             return m.continue_technology[sys, tech, yr] == 0
         return Constraint.Skip
 
