@@ -19,6 +19,7 @@ def main(file_path, **kwargs):
     carbonprice_include = kwargs.get('carboprice_include', False)
     max_renew = kwargs.get('max_renew', 10)
     allow_replace_same_technology = kwargs.get('allow_replace_same_technology', False)
+    max_count_include = kwargs.get('max_count_include', True)
 
     # 1. Load Data
     data = _ld.load_data(file_path)
@@ -27,7 +28,8 @@ def main(file_path, **kwargs):
     model = _md.build_unified_model(data,
                                     carbonprice_include=carbonprice_include,
                                     max_renew=max_renew,
-                                    allow_replace_same_technology=allow_replace_same_technology)
+                                    allow_replace_same_technology=allow_replace_same_technology,
+                                    max_count_include=max_count_include)
 
     # Solve the Model
     solver = SolverFactory(solver_selection)

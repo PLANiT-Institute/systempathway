@@ -19,7 +19,6 @@ def build_unified_model(data, **kwargs):
 
     model = _param.build_parameters(model, data, **kwargs)
     model = _objf.objectivefucntion(model, **kwargs)
-
     model = _const.emission_constraints(model, **kwargs)
     model = _const.baseline_constraints(model)
     model = _const.fuel_constraints(model, data)
@@ -27,6 +26,7 @@ def build_unified_model(data, **kwargs):
     model = _const.active_technology_constraints(model)
     model = _const.lifespan_constraints(model)
     model = _const.other_constraints(model, **kwargs)
+    model = _const.max_count_constraints(model, data, **kwargs)
 
     return model
 

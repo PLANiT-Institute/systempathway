@@ -1,4 +1,5 @@
 from pyomo.environ import (Constraint)
+import pandas as pd
 
 def emission_constraints(model,**kwargs):
 
@@ -701,4 +702,45 @@ def lifespan_constraints(model):
         model.systems, model.technologies, model.years, rule=enforce_no_continuation_in_replacement_years_rule
     )
 
+    return model
+
+def max_count_constraints(model, data, **kwargs):
+    # Check if max_count constraint should be applied
+    max_count_include = kwargs.get('max_count_include', True)  # Default to True
+    
+    # Skip if max_count should not be included or data is missing
+    if not max_count_include:
+        print("Max count constraints disabled")
+        return model
+        
+    if 'max_count' not in data['technology'].columns:
+        print("Warning: max_count column not found in technology data")
+        return model
+    
+    # Create a dictionary for max_count values
+    max_count_dict = {tech: count for tech, count in 
+                     zip(data['technology'].index, data['technology']['max_count']) 
+                     if not pd.isna(count)}
+    
+    # Print the constraints for debugging
+    print(f"Max count constraints: {max_count_dict}")
+    
+    # Define the constraint rule
+    def max_technology_adoption_rule(m, tech, yr):
+        # Skip technologies without a max_count limit
+        if tech not in max_count_dict:
+            return Constraint.Skip
+        
+        # Sum active_technology across all systems for this technology in this year
+        total_adoptions = sum(m.active_technology[sys, tech, yr] for sys in m.systems)
+        
+        # Ensure the count doesn't exceed the maximum allowed for this technology
+        return total_adoptions <= max_count_dict[tech]
+    
+    # Add the constraint to the model
+    model.max_technology_adoption_constraint = Constraint(
+        model.technologies, model.years, 
+        rule=max_technology_adoption_rule
+    )
+    
     return model
