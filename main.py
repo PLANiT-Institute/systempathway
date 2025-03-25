@@ -231,7 +231,7 @@ def main(file_path, **kwargs):
 
 
 if __name__ == "__main__":
-    file_path = 'database/Steel Data Mar 10.xlsx'
+    file_path = 'database/Steel Data Mar_test.xlsx'
     output = main(file_path,
                   solver_selection='appsi_highs', # appsi_highs
                   carboprice_include=False,
