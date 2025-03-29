@@ -1,4 +1,3 @@
-
 from pyomo.environ import (Constraint)
 import pandas as pd
 
@@ -542,6 +541,21 @@ def other_constraints(model, **kwargs):
             model.years,
             rule=no_replace_with_self_rule
         )
+
+    # New constraint: If a system's baseline technology is EAF, it can only use EAF in all years
+    def eaf_only_rule(m, sys, tech, yr):
+        # If this system has EAF as its baseline technology
+        if m.baseline_technology[sys] == 'EAF' and tech != 'EAF':
+            # Then in all years, only EAF can be active for this system
+            return m.active_technology[sys, tech, yr] == 0
+        # Conversely, if a system doesn't have EAF as baseline, it cannot use EAF
+        elif m.baseline_technology[sys] != 'EAF' and tech == 'EAF':
+            return m.active_technology[sys, tech, yr] == 0
+        return Constraint.Skip
+
+    model.eaf_only_constraint = Constraint(
+        model.systems, model.technologies, model.years, rule=eaf_only_rule
+    )
 
     def renew_limit_rule(m, sys, tech):
         return sum(m.renew[sys, tech, yr] for yr in m.years) <= m.max_renew

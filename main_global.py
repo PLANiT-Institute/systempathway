@@ -61,9 +61,6 @@ def main(file_path, **kwargs):
     annual_global_fuel_cost = {yr: 0.0 for yr in model.years}
     annual_global_feedstock_cost = {yr: 0.0 for yr in model.years}
     annual_global_production = {yr: 0.0 for yr in model.years}
-    
-    # Add dictionary for technology production tracking
-    tech_production = {yr: {tech: 0.0 for tech in model.technologies} for yr in model.years}
 
     # Dictionary to store system-specific results
     system_results = {}
@@ -81,8 +78,7 @@ def main(file_path, **kwargs):
             'fuel_consumption_table': [],
             'feedstock_consumption_table': [],
             'technology_statuses': [],
-            'annualized_capex': [],  # Add container for annualized CAPEX
-            'tech_production': []    # Add container for technology production
+            'annualized_capex': []  # Add container for annualized CAPEX
         }
 
         # Baseline info
@@ -147,17 +143,6 @@ def main(file_path, **kwargs):
                     "Active": active
                 })
                 annual_global_tech_adoption[yr][tech] += active
-                
-                # Track production by technology
-                tech_production_amount = value(model.prod_active[sys, tech, yr])
-                tech_production[yr][tech] += tech_production_amount
-                
-                # Store system-level technology production
-                system_results[sys]['tech_production'].append({
-                    "Year": yr,
-                    "Technology": tech,
-                    "Production": tech_production_amount
-                })
 
             # Update global metrics
             annual_global_capex[yr] += capex_cost
@@ -359,7 +344,7 @@ def main(file_path, **kwargs):
         })
 
     # Export to Excel
-    output_excel_path = "results/Model_Output_Domestic_Share.xlsx"
+    output_excel_path = "results/Model_Output_Global.xlsx"
     technology_data = {}  # Dictionary to collect Year-Technology pairs for each system
 
     with pd.ExcelWriter(output_excel_path, engine='openpyxl') as writer:
@@ -436,59 +421,9 @@ def main(file_path, **kwargs):
             ordered_sheets += [sheet for sheet in all_sheets if sheet.title not in desired_order]
             writer.book._sheets = ordered_sheets
 
-        # Add technology production share sheet
-        tech_production_data = []
-        for yr in sorted(model.years):
-            total_production = annual_global_production[yr]
-            row = {"Year": yr, "Total Production": total_production}
-            
-            # Add absolute production by technology
-            for tech in model.technologies:
-                row[f"{tech} Production"] = tech_production[yr][tech]
-            
-            # Add percentage share by technology
-            if total_production > 0:
-                for tech in model.technologies:
-                    row[f"{tech} Share (%)"] = (tech_production[yr][tech] / total_production) * 100
-            else:
-                for tech in model.technologies:
-                    row[f"{tech} Share (%)"] = 0
-                    
-            tech_production_data.append(row)
-        
-        tech_production_df = pd.DataFrame(tech_production_data).set_index("Year")
-        tech_production_df.to_excel(writer, sheet_name='Technology Production Share')
-        
-        # System-level technology production sheets
-        for sys in model.systems:
-            # Create a pivot table for this system's technology production
-            tech_prod_df = pd.DataFrame(system_results[sys]['tech_production'])
-            tech_prod_pivot = tech_prod_df.pivot_table(
-                index='Year', 
-                columns='Technology', 
-                values='Production', 
-                aggfunc='sum'
-            ).fillna(0)
-            
-            # Calculate percentage shares
-            tech_prod_pivot_pct = tech_prod_pivot.div(tech_prod_pivot.sum(axis=1), axis=0) * 100
-            tech_prod_pivot_pct.columns = [f"{col} Share (%)" for col in tech_prod_pivot_pct.columns]
-            
-            # Combine absolute and percentage values
-            combined_df = pd.concat([tech_prod_pivot, tech_prod_pivot_pct], axis=1)
-            combined_df.to_excel(writer, sheet_name=f"{sys}_Tech_Production")
-
-            merged_tech_df.to_excel(writer, sheet_name='Technology', index=False)
-            desired_order = ['Global Annual Summary', 'Annualized CAPEX', 'Discounted Costs', 
-                             'Unit Costs and MAC', 'System CAPEX', 'Technology Production Share', 'Technology']
-            all_sheets = writer.book.worksheets
-            ordered_sheets = [sheet for name in desired_order for sheet in all_sheets if sheet.title == name]
-            ordered_sheets += [sheet for sheet in all_sheets if sheet.title not in desired_order]
-            writer.book._sheets = ordered_sheets
-
 
 if __name__ == "__main__":
-    file_path = 'database/Steel Data Mar 10.xlsx'
+    file_path = 'database/Steel Data Mar 10 Global.xlsx'
     output = main(file_path,
                   solver_selection='appsi_highs', # appsi_highs
                   carboprice_include=False,
