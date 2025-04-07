@@ -313,13 +313,12 @@ def main(file_path, **kwargs):
         actual_discount_factor = 1 / ((1 + actual_discount_rate) ** (yr - base_year))
         nominal_discount_factor = 1 / ((1 + nominal_discount_rate) ** (yr - base_year))
         
-        discounted_capex = annual_global_capex[yr] * actual_discount_factor
-        discounted_renewal = annual_global_renewal_cost[yr] * actual_discount_factor
+        discounted_annualized_capex = annual_global_annualized_capex[yr] * actual_discount_factor
         discounted_opex = annual_global_opex[yr] * actual_discount_factor
         discounted_fuel = annual_global_fuel_cost[yr] * nominal_discount_factor
         discounted_feedstock = annual_global_feedstock_cost[yr] * nominal_discount_factor
         
-        total_discounted = discounted_capex + discounted_renewal + discounted_opex + discounted_fuel + discounted_feedstock
+        total_discounted = discounted_annualized_capex + discounted_opex + discounted_fuel + discounted_feedstock
         
         # Calculate unit costs (per unit of production)
         production = annual_global_production[yr]
@@ -348,14 +347,15 @@ def main(file_path, **kwargs):
         if cumulative_emission_reduction > 0:
             mac = cumulative_discounted_cost / cumulative_emission_reduction
         
+        discounted_cost_per_ton = total_discounted / production if production > 0 else 0.0
         discounted_costs.append({
             "Year": yr,
-            "Discounted CAPEX": discounted_capex,
-            "Discounted Renewal": discounted_renewal,
+            "Discounted Annualized CAPEX": discounted_annualized_capex,
             "Discounted OPEX": discounted_opex,
             "Discounted Fuel Cost": discounted_fuel,
             "Discounted Feedstock Cost": discounted_feedstock,
             "Total Discounted Cost": total_discounted,
+            "Discounted Cost per Ton ($/ton)": discounted_cost_per_ton,
             "Emission Reduction (tCO2e)": emission_reduction,
             "Cumulative Discounted Cost": cumulative_discounted_cost,
             "Cumulative Emission Reduction (tCO2e)": cumulative_emission_reduction,
