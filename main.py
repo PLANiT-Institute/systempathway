@@ -1,5 +1,7 @@
 from pyomo.environ import *
 import os
+import tkinter as tk
+from tkinter import filedialog
 
 from pyomo.util.infeasible import log_infeasible_constraints
 import pandas as pd
@@ -12,6 +14,20 @@ import utils.modelbuilder as _md
 
 importlib.reload(_ld)
 importlib.reload(_md)
+
+def select_file():
+    root = tk.Tk()
+    root.withdraw()  # Hide the root window
+    
+    # Set initial directory to the database folder
+    initial_dir = "database"
+    
+    file_path = filedialog.askopenfilename(
+        title="Select Excel File",
+        initialdir=initial_dir,
+        filetypes=[("Excel Files", "*.xlsx *.xls")]
+    )
+    return file_path
 
 def main(file_path, **kwargs):
 
@@ -488,9 +504,12 @@ def main(file_path, **kwargs):
 
 
 if __name__ == "__main__":
-    file_path = 'database/Steel Data Mar 10.xlsx'
-    output = main(file_path,
-                  solver_selection='appsi_highs', # appsi_highs
-                  carboprice_include=False,
-                  max_renew=10,
-                  allow_replace_same_technology=False)
+    file_path = select_file()
+    if not file_path:
+        print("No file selected. Exiting.")
+    else:
+        output = main(file_path,
+                      solver_selection='appsi_highs',
+                      carboprice_include=False,
+                      max_renew=10,
+                      allow_replace_same_technology=False)
