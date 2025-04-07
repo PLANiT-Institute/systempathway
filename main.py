@@ -359,7 +359,7 @@ def main(file_path, **kwargs):
         })
 
     # Export to Excel
-    output_excel_path = "results/Model_Output_Domestic.xlsx"
+    output_excel_path = "results/Model_Output_Domestic_Share.xlsx"
     technology_data = {}  # Dictionary to collect Year-Technology pairs for each system
 
     with pd.ExcelWriter(output_excel_path, engine='openpyxl') as writer:
@@ -402,29 +402,6 @@ def main(file_path, **kwargs):
         system_capex_df = pd.DataFrame(system_capex_data).set_index("Year")
         system_capex_df.to_excel(writer, sheet_name='System CAPEX')
         
-        # Add technology production share sheet
-        tech_production_data = []
-        for yr in sorted(model.years):
-            total_production = annual_global_production[yr]
-            row = {"Year": yr, "Total Production": total_production}
-            
-            # Add absolute production by technology
-            for tech in model.technologies:
-                row[f"{tech} Production"] = tech_production[yr][tech]
-            
-            # Add percentage share by technology
-            if total_production > 0:
-                for tech in model.technologies:
-                    row[f"{tech} Share (%)"] = (tech_production[yr][tech] / total_production) * 100
-            else:
-                for tech in model.technologies:
-                    row[f"{tech} Share (%)"] = 0
-                    
-            tech_production_data.append(row)
-        
-        tech_production_df = pd.DataFrame(tech_production_data).set_index("Year")
-        tech_production_df.to_excel(writer, sheet_name='Technology Production Share')
-        
         # System-level sheets
         for sys in model.systems:
             costs_df = pd.DataFrame(system_results[sys]['yearly_metrics'])
@@ -450,6 +427,56 @@ def main(file_path, **kwargs):
         for sys, df in technology_data.items():
             merged_tech_df = merged_tech_df.merge(df, on='Year', how='left', suffixes=('', f'_{sys}'))
             merged_tech_df.rename(columns={'Technology': f'{sys}_Technology'}, inplace=True)
+
+            merged_tech_df.to_excel(writer, sheet_name='Technology', index=False)
+            desired_order = ['Global Annual Summary', 'Annualized CAPEX', 'Discounted Costs', 
+                             'Unit Costs and MAC', 'System CAPEX', 'Technology']
+            all_sheets = writer.book.worksheets
+            ordered_sheets = [sheet for name in desired_order for sheet in all_sheets if sheet.title == name]
+            ordered_sheets += [sheet for sheet in all_sheets if sheet.title not in desired_order]
+            writer.book._sheets = ordered_sheets
+
+        # Add technology production share sheet
+        tech_production_data = []
+        for yr in sorted(model.years):
+            total_production = annual_global_production[yr]
+            row = {"Year": yr, "Total Production": total_production}
+            
+            # Add absolute production by technology
+            for tech in model.technologies:
+                row[f"{tech} Production"] = tech_production[yr][tech]
+            
+            # Add percentage share by technology
+            if total_production > 0:
+                for tech in model.technologies:
+                    row[f"{tech} Share (%)"] = (tech_production[yr][tech] / total_production) * 100
+            else:
+                for tech in model.technologies:
+                    row[f"{tech} Share (%)"] = 0
+                    
+            tech_production_data.append(row)
+        
+        tech_production_df = pd.DataFrame(tech_production_data).set_index("Year")
+        tech_production_df.to_excel(writer, sheet_name='Technology Production Share')
+        
+        # System-level technology production sheets
+        for sys in model.systems:
+            # Create a pivot table for this system's technology production
+            tech_prod_df = pd.DataFrame(system_results[sys]['tech_production'])
+            tech_prod_pivot = tech_prod_df.pivot_table(
+                index='Year', 
+                columns='Technology', 
+                values='Production', 
+                aggfunc='sum'
+            ).fillna(0)
+            
+            # Calculate percentage shares
+            tech_prod_pivot_pct = tech_prod_pivot.div(tech_prod_pivot.sum(axis=1), axis=0) * 100
+            tech_prod_pivot_pct.columns = [f"{col} Share (%)" for col in tech_prod_pivot_pct.columns]
+            
+            # Combine absolute and percentage values
+            combined_df = pd.concat([tech_prod_pivot, tech_prod_pivot_pct], axis=1)
+            combined_df.to_excel(writer, sheet_name=f"{sys}_Tech_Production")
 
             merged_tech_df.to_excel(writer, sheet_name='Technology', index=False)
             desired_order = ['Global Annual Summary', 'Annualized CAPEX', 'Discounted Costs', 
