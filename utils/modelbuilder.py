@@ -1,8 +1,6 @@
-from pyomo.environ import (
-    ConcreteModel, Var, NonNegativeReals, Binary, Param,
-    Objective, Constraint, SolverFactory, Set, minimize, value, Any
-)
+from pyomo.environ import (ConcreteModel, Objective, Constraint, minimize)
 import pandas as pd
+<<<<<<< HEAD
 
 
 def build_model_for_system(system_name, baseline_row, data, **kwargs):
@@ -472,14 +470,18 @@ def build_model_for_system(system_name, baseline_row, data, **kwargs):
     model.total_cost = Objective(rule=total_cost_rule, sense=minimize)
 
     return model
+=======
+import importlib
+import utils.parameterbuilder as _param
+import utils.constraintbuilder as _const
+import utils.objectivefunctionbuilder as _objf
+
+importlib.reload(_param)
+importlib.reload(_const)
+importlib.reload(_objf)
+>>>>>>> workng_js_v3
 
 def build_unified_model(data, **kwargs):
-    """
-    Get kwargs
-    """
-    carbonprice_include = kwargs.get('carbonprice_include', False)
-    max_renew = kwargs.get('max_renew', 10)
-    allow_replace_same_technology = kwargs.get('allow_replace_same_technology', False)
 
     """
     Build the unified Pyomo model.
@@ -487,6 +489,7 @@ def build_unified_model(data, **kwargs):
 
     model = ConcreteModel()
 
+<<<<<<< HEAD
     # --------------------------
     # 1. Define Sets
     # --------------------------
@@ -1149,5 +1152,18 @@ def build_unified_model(data, **kwargs):
 
     model.total_cost = Objective(rule=total_cost_rule, sense=minimize)
 
+=======
+    model = _param.build_parameters(model, data, **kwargs)
+    model = _objf.objectivefucntion(model, **kwargs)
+    model = _const.emission_constraints(model, **kwargs)
+    model = _const.baseline_constraints(model)
+    model = _const.fuel_constraints(model, data)
+    model = _const.feedstock_constraints(model, data)
+    model = _const.active_technology_constraints(model)
+    model = _const.lifespan_constraints(model)
+    model = _const.other_constraints(model, **kwargs)
+    model = _const.max_count_constraints(model, data, **kwargs)
+>>>>>>> workng_js_v3
 
     return model
+
