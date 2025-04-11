@@ -375,7 +375,7 @@ def main(file_path, **kwargs):
         })
 
     # Export to Excel
-    output_excel_path = "results/Model_Output_Domestic_Share.xlsx"
+    output_excel_path = "results/Model_Output.xlsx"
     technology_data = {}  # Dictionary to collect Year-Technology pairs for each system
 
     with pd.ExcelWriter(output_excel_path, engine='openpyxl') as writer:
